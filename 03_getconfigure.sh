@@ -3,6 +3,10 @@
 #
 # Клонирует или обновляет репозиторий конфигурации и переключается на ветку
 # VPCONFIGURE_GIT_BRANCH (freebsd | debian | centos), затем git pull.
+# После клонирования каталог .git удаляется (на целевой системе история не нужна).
+# Если целевой путь уже есть и это git-репозиторий — выполняется fetch/pull. Иначе при непустом
+# пути (файл, каталог с файлами) он удаляется и выполняется новое клонирование; пустой каталог
+# сохраняется и в него клонируют.
 #
 # Сначала stdout: одна строка result:…; message:… (и доп. поля), пояснения — stderr.
 #
@@ -18,7 +22,7 @@
 set -euo pipefail
 
 DEFAULT_REPO='https://github.com/vp-connect/vpconnect-configure.git'
-DEFAULT_DIR='~/vpconnect-configure'
+DEFAULT_DIR='./vpconnect-configure'
 
 vp_sanitize_msg() {
   local s="$*"
@@ -98,6 +102,14 @@ assert_branch_matches_os() {
   esac
 }
 
+# Есть ли в каталоге хотя бы один элемент (включая скрытые). Только для обычных каталогов.
+dir_is_nonempty() (
+  [[ -d "${1:-}" ]] || exit 1
+  shopt -s dotglob nullglob 2>/dev/null || true
+  local -a entries=( "$1"/* )
+  [[ ${#entries[@]} -gt 0 ]]
+)
+
 # Проверка наличия ветки на origin после fetch (refs/remotes/origin/$branch).
 remote_branch_exists() {
   local dir=$1
@@ -113,7 +125,10 @@ clone_repo() {
   parent="$(dirname -- "$dir")"
   [[ -d "$parent" ]] || mkdir -p "$parent" || die "Не удалось создать каталог: $parent"
 
-  [[ ! -e "$dir" ]] || die "Внутренняя ошибка: путь для clone уже существует: $dir"
+  if [[ -e "$dir" ]]; then
+    [[ -d "$dir" ]] || die "Путь для clone существует и не каталог: $dir"
+    dir_is_nonempty "$dir" && die "Внутренняя ошибка: каталог для clone не пуст: $dir"
+  fi
 
   local err
   if ! err=$(GIT_TERMINAL_PROMPT=0 git clone \
@@ -135,6 +150,14 @@ clone_repo() {
     esac
     die "git clone не выполнен: $(vp_sanitize_msg "$err")"
   fi
+}
+
+# Удаляет метаданные git после клона. В git нет отдельной команды «снять репозиторий» — удаляем каталог .git.
+remove_git_dir() {
+  local dir=$1
+  local gitmeta="${dir}/.git"
+  [[ -e "$gitmeta" ]] || return 0
+  rm -rf -- "$gitmeta" || die "Не удалось удалить ${gitmeta}"
 }
 
 update_repo() {
@@ -216,19 +239,25 @@ main() {
 
   export GIT_TERMINAL_PROMPT=0
 
+  local short
+
   if [[ -d "${target_dir}/.git" ]]; then
     printf 'Обновление существующего репозитория: %s\n' "$target_dir" >&2
     update_repo "$target_dir" "$repo" "$branch"
+    short="$(git -C "$target_dir" rev-parse --short HEAD 2>/dev/null || printf '?')"
   else
     if [[ -e "$target_dir" ]]; then
-      die "Путь уже существует и не git-репозиторий: $target_dir (удалите или укажите другой --dir)"
+      if [[ -f "$target_dir" || -L "$target_dir" ]] || { [[ -d "$target_dir" ]] && dir_is_nonempty "$target_dir"; }; then
+        printf 'Путь %s уже занят (не git или не пустой каталог), удаляю и клонирую заново\n' "$target_dir" >&2
+        rm -rf -- "$target_dir" || die "Не удалось удалить: $target_dir"
+      fi
     fi
     printf 'Клонирование в %s, ветка %s\n' "$target_dir" "$branch" >&2
     clone_repo "$repo" "$target_dir" "$branch"
+    short="$(git -C "$target_dir" rev-parse --short HEAD 2>/dev/null || printf '?')"
+    printf 'Удаление каталога .git (история репозитория на целевой системе не нужна)\n' >&2
+    remove_git_dir "$target_dir"
   fi
-
-  local short
-  short="$(git -C "$target_dir" rev-parse --short HEAD 2>/dev/null || printf '?')"
   vp_result_line success "репозиторий готов" "path:${target_dir}" "branch:${branch}" "commit:${short}" "remote:${repo}"
 }
 
