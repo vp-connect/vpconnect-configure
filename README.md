@@ -28,38 +28,35 @@
 | `debian`   | Debian, Ubuntu и совместимые (`apt`) |
 | `centos`   | RHEL‑семейство: Alma, Rocky, Oracle, Fedora, Amazon Linux 2023+ и т.д. (`dnf`/`yum`) |
 
-Скрипты **`02`–`08`** должны запускаться **после** `01` и опираться на `VPCONFIGURE_GIT_BRANCH`. **`00`** и **`01`** переменную не требуют.
+Скрипты **`02`–`08`** запускаются **после** `01` и опираются на `VPCONFIGURE_GIT_BRANCH`. **`00`** и **`01`** переменную не требуют.
 
-## Строка результата (для автоматики)
+## Строка результата (для автоматизации)
 
-Первая строка **stdout** всегда начинается с `result:success`, `result:warning` или `result:error`, далее `; message:текст` и при необходимости `; ключ:значение` (например `branch:debian`). В `message` символ `;` не использовать. Пояснения и лог — в **stderr** (кроме второй строки `01 … --export`: `export VPCONFIGURE_GIT_BRANCH=…`).
+Первая строка **stdout** всегда начинается с `result:success`, `result:warning` или `result:error`, далее `; message:текст` и при необходимости `; ключ:значение` (например `branch:debian`). В `message` символ `;` не использовать. Пояснения и лог — в **stderr**
+
+`result:success|warning|error;message:текст;[ключ:значение;]`
 
 ## Скрипты
 
 | Файл | Назначение |
 |------|------------|
-| `00_installbash.sh` | Установить `bash`, если нет (`sh ./00_installbash.sh`) |
+| `00_bashinstall.sh` | Установить `bash`, если нет (`sh ./00_installbash.sh`) |
 | `01_getosversion.sh` | Семейство ОС → `VPCONFIGURE_GIT_BRANCH`, опции `--export`, `--persist` |
 | `02_gitinstall.sh` | Установка `git` по семейству |
-| `03_getconfigure.sh` | Клон/обновление репозитория (заготовка) |
-| `04_setsystemaccess.sh` | Пароль root, SSH‑порт, ключ (заготовка) |
-| `05_setdomain.sh` | Hostname / домен (заготовка) |
-| `06_setwireguard.sh` | WireGuard (заготовка) |
-| `07_setmtproxy.sh` | MTProxy (заготовка) |
-| `08_setvpmanage.sh` | VPManage (заготовка) |
+| `03_getconfigure.sh` | Клон/обновление репозитория |
+| `04_setsystemaccess.sh` | Пароль root, SSH‑порт, ключ |
+| `05_setdomain.sh` | Hostname / домен |
+| `06_setwireguard.sh` | WireGuard |
+| `07_setmtproxy.sh` | MTProxy |
+| `08_setvpmanage.sh` | VPManage |
 
 ## Порядок запуска (пример)
 
 ```sh
-sh ./00_installbash.sh
+sh ./00_bashinstall.sh
 eval "$(bash ./01_getosversion.sh --export | sed -n '2p')"
-bash ./01_getosversion.sh --persist   # опционально, лог в stderr после result
+bash ./01_getosversion.sh --persist   # опционально
 bash ./02_gitinstall.sh
-# далее 03–08 по мере реализации
+bash ./03_getconfigure.sh
+# далее 04–08 по необходимости настройки сервера
 ```
-
-На FreeBSD сначала нужен **bash** (через `00`), остальные шаги — **`bash ./…`**.
-
-## Формат строк в репозитории
-
-Для `*.sh` задано окончание строк **LF** (`.gitattributes`), чтобы на FreeBSD не было ошибки `set: Illegal option -` из‑за CRLF.
