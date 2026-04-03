@@ -60,22 +60,23 @@ assert_branch_matches_os() {
 
 install_debian_family() {
   export DEBIAN_FRONTEND=noninteractive
-  apt-get update -y
-  apt-get install -y git
+  # Весь вывод пакетного менеджера — в stderr, чтобы первая строка stdout оставалась result:… для парсера.
+  apt-get update -y >&2
+  apt-get install -y git >&2
 }
 
 install_rhel_family() {
   if command -v dnf >/dev/null 2>&1; then
-    dnf install -y git
+    dnf install -y git >&2
   elif command -v yum >/dev/null 2>&1; then
-    yum install -y git
+    yum install -y git >&2
   else
     die "Нет dnf и yum (семейство centos / RHEL)"
   fi
 }
 
 install_freebsd() {
-  env ASSUME_ALWAYS_YES=yes pkg install -y git
+  env ASSUME_ALWAYS_YES=yes pkg install -y git >&2
 }
 
 main() {
