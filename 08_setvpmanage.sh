@@ -13,8 +13,9 @@
 #      --export, --persist [FILE]
 #
 # Результат: result:success; …; password:<значение> (если пароль сгенерирован или передан).
-# settings.env: FLASK_SECRET_KEY (32 символа a-z и -), ADMIN_DEFAULT_PASSWORD, логин-лимиты,
-# VPN_CLIENT_KEYS_BASE_DIR ← VPCONFIGURE_WG_CLIENT_CERT_PATH, MTPROXY_LINK_FILE ← путь к mtproxy.link.
+# settings.env: полный набор ключей как в vpconnect-manage/settings.env (см. manage_site/settings.py).
+# Доп. переопределения из окружения перед запуском: VPCONFIGURE_WG_CONF_PATH, VPCONFIGURE_WIREGUARD_*,
+# VPCONFIGURE_VPM_LOGIN_MAX_FAILED_ATTEMPTS, VPCONFIGURE_VPM_LOGIN_LOCKOUT_MINUTES.
 #
 # Нужны VPCONFIGURE_GIT_BRANCH и VPCONFIGURE_DOMAIN (в окружении или в ${DEFAULT_PERSIST_FILE} —
 # при запуске bash ./08_… без login-shell файл подхватывается в начале main()).
@@ -296,9 +297,25 @@ run_debian() {
   flask_secret="$(gen_flask_secret_key)"
   [[ ${#flask_secret} -eq 32 ]] || die "Не удалось сгенерировать FLASK_SECRET_KEY (нужно 32 символа)"
 
-  local vpn_keys_dir mtproxy_link_file
-  vpn_keys_dir="$(expand_tilde "$VPCONFIGURE_WG_CLIENT_CERT_PATH")"
+  local mtproxy_link_file wg_client_conf_dir wg_keys_dir login_max login_lock wg_conf_path \
+    wg_sync_min wg_if_name wg_pub_host wg_listen_port wg_dns
+
   mtproxy_link_file="$(expand_tilde "$VPCONFIGURE_MTPROXY_LINK_PATH")"
+  wg_client_conf_dir="$(expand_tilde "${VPCONFIGURE_WIREGUARD_CLIENT_CONFIG_DIR:-$VPCONFIGURE_WG_CLIENT_CONFIG_PATH}")"
+  wg_keys_dir="$(expand_tilde "${VPCONFIGURE_WIREGUARD_CLIENT_KEYS_DIR:-$VPCONFIGURE_WG_CLIENT_CERT_PATH}")"
+
+  login_max="${VPCONFIGURE_VPM_LOGIN_MAX_FAILED_ATTEMPTS:-5}"
+  login_lock="${VPCONFIGURE_VPM_LOGIN_LOCKOUT_MINUTES:-60}"
+  if [[ -v VPCONFIGURE_WG_CONF_PATH ]]; then
+    wg_conf_path="$(expand_tilde "${VPCONFIGURE_WG_CONF_PATH:-}")"
+  else
+    wg_conf_path='/etc/wireguard/wg0.conf'
+  fi
+  wg_sync_min="${VPCONFIGURE_WIREGUARD_SYNC_INTERVAL_MINUTES:-5}"
+  wg_if_name="${VPCONFIGURE_WIREGUARD_INTERFACE_NAME:-wg0}"
+  wg_pub_host="${VPCONFIGURE_WIREGUARD_PUBLIC_HOST:-${VPCONFIGURE_DOMAIN}}"
+  wg_listen_port="${VPCONFIGURE_WIREGUARD_LISTEN_PORT:-${VPCONFIGURE_WG_PORT:-0}}"
+  wg_dns="${VPCONFIGURE_WIREGUARD_DNS:-8.8.8.8}"
 
   export VPCONFIGURE_VPM_HTTP_PORT="$opt_http"
   export VPCONFIGURE_VPM_PASSWORD="$app_pw"
@@ -314,7 +331,7 @@ run_debian() {
     printf '%s\n' "Предупреждение: нет файла ${VPCONFIGURE_MTPROXY_LINK_PATH} — выполните 07_setmtproxy.sh при необходимости." >&2
   fi
 
-  install -d -m 755 -- "$vpn_keys_dir"
+  install -d -m 755 -- "$wg_keys_dir" "$wg_client_conf_dir"
 
   export DEBIAN_FRONTEND=noninteractive
   printf '%s\n' "VPManage: apt-get update (без вывода пакетов, может занять несколько минут)…" >&2
@@ -353,16 +370,50 @@ run_debian() {
 
   umask 077
   cat >"${VPM_INSTALL}/settings.env" <<EOF
-# веб-панель vpconnect
+# =============================================================================
+# Файл настроек vpconnect-manage (формат KEY=value).
+# Сгенерирован 08_setvpmanage.sh; при повторном запуске перезаписывается.
+# Смысл параметров — README vpconnect-manage, раздел про settings.env.
+# =============================================================================
+
+# --- Веб-приложение Flask ---
+# Секрет подписи cookie сессии; в продакшене — длинная случайная строка.
 FLASK_SECRET_KEY=${flask_secret}
+
+# Пароль для первичного admin_user.json и сброса из UI (опционально).
 ADMIN_DEFAULT_PASSWORD=${app_pw}
-LOGIN_MAX_FAILED_ATTEMPTS=5
-LOGIN_LOCKOUT_MINUTES=60
 
-# каталог ключей клиентов VPN (относительно каталога запуска или абсолютный путь)
-VPN_CLIENT_KEYS_BASE_DIR=${vpn_keys_dir}
+# Блокировка входа после неверных попыток с одного IP.
+LOGIN_MAX_FAILED_ATTEMPTS=${login_max}
+LOGIN_LOCKOUT_MINUTES=${login_lock}
 
-# файл со ссылкой на Telegram MTProxy (одна строка)
+# --- WireGuard (пустой WIREGUARD_CONF_PATH = интеграция выключена, секция клиентов в UI скрыта) ---
+# По умолчанию /etc/wireguard/wg0.conf. Чтобы выключить UI: export VPCONFIGURE_WG_CONF_PATH= перед запуском 08.
+WIREGUARD_CONF_PATH=${wg_conf_path}
+
+# Интервал фоновой синхронизации vpn_clients.json с wg0.conf, минуты. 0 — только при старте и при открытии дашборда.
+WIREGUARD_SYNC_INTERVAL_MINUTES=${wg_sync_min}
+
+# Имя интерфейса для wg-quick strip / wg syncconf.
+WIREGUARD_INTERFACE_NAME=${wg_if_name}
+
+# Публичный FQDN или IP для Endpoint, если WIREGUARD_ENDPOINT пуст (по умолчанию VPCONFIGURE_DOMAIN).
+WIREGUARD_PUBLIC_HOST=${wg_pub_host}
+
+# Порт UDP для Endpoint при пустом WIREGUARD_ENDPOINT: 0 = ListenPort из wg0.conf, иначе при отсутствии — 51820.
+WIREGUARD_LISTEN_PORT=${wg_listen_port}
+
+# DNS в клиентском [Interface].
+WIREGUARD_DNS=${wg_dns}
+
+# Каталог клиентских *.conf (и qr). Пусто = <родитель WIREGUARD_CLIENT_KEYS_DIR>/client_config.
+WIREGUARD_CLIENT_CONFIG_DIR=${wg_client_conf_dir}
+
+# Каталог файлов ключей клиентов на сервере (по умолчанию VPCONFIGURE_WG_CLIENT_CERT_PATH с 06).
+WIREGUARD_CLIENT_KEYS_DIR=${wg_keys_dir}
+
+# --- MTProxy ---
+# Файл со ссылкой tg:// (первая непустая строка). Пусто — секция MTProxy в UI скрыта.
 MTPROXY_LINK_FILE=${mtproxy_link_file}
 EOF
   umask 022
