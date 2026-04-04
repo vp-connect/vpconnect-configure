@@ -4,6 +4,8 @@
 # Установка WireGuard (только ветка debian): пакеты, серверные ключи, wg0.conf, systemd wg-quick@wg0.
 # После запуска: при наличии ufw или активного firewalld — правило UDP для порта WG и применение.
 # Клиентов и клиентские ключи/конфиги не создаём — только сервер.
+# Управление клиентами на уже настроенном сервере — отдельные скрипты в vpconnect-configure/wg/ (см. wg/README.md).
+# После успешной настройки wg0: все *.sh в каталоге wg/ (рядом с этим скриптом) получают chmod +x и симлинки в /usr/local/bin.
 #
 # До настройки выставляются переменные окружения (для последующих скриптов и вызова из vpconnect_install):
 #   VPCONFIGURE_WG_PORT
@@ -146,6 +148,33 @@ open_wg_port_in_firewall() {
   fi
 
   printf '%s\n' "ufw и firewalld не найдены: откройте UDP ${port} вручную, если используется другой файрвол." >&2
+}
+
+# Каталог vpconnect-configure/wg рядом с 06_setwireguard.sh: исполняемые права и имена в PATH (/usr/local/bin).
+wireguard_publish_wg_scripts() {
+  local configure_root wgdir
+  configure_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  wgdir="${configure_root}/wg"
+  if [[ ! -d "$wgdir" ]]; then
+    printf '%s\n' "Предупреждение: каталог ${wgdir} не найден — публикация wg-скриптов пропущена." >&2
+    return 0
+  fi
+  local -a scripts=()
+  shopt -s nullglob
+  scripts=( "${wgdir}"/*.sh )
+  shopt -u nullglob
+  if [[ ${#scripts[@]} -eq 0 ]]; then
+    printf '%s\n' "Предупреждение: в ${wgdir} нет файлов *.sh — нечего публиковать." >&2
+    return 0
+  fi
+  chmod a+x -- "${scripts[@]}"
+  install -d -m 755 /usr/local/bin
+  local f base
+  for f in "${scripts[@]}"; do
+    base="$(basename -- "$f")"
+    ln -sf -- "$f" "/usr/local/bin/${base}"
+  done
+  printf '%s\n' "wg: ${#scripts[@]} скрипт(ов) в ${wgdir} — режим исполнения установлен, ссылки в /usr/local/bin (например: wg.sh help)." >&2
 }
 
 merge_wg_into_env_file() {
@@ -302,6 +331,8 @@ EOF
     || die "Не удалось запустить wg-quick@wg0"
 
   open_wg_port_in_firewall "$opt_port"
+
+  wireguard_publish_wg_scripts
 
   export VPCONFIGURE_WG_PORT="$opt_port"
   export VPCONFIGURE_WG_CLIENT_CERT_PATH="$opt_cert"
