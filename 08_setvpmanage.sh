@@ -114,7 +114,10 @@ gen_vpm_password() (
   LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 30
 )
 
-# 32 символа: строчные латинские буквы и дефис (для FLASK_SECRET_KEY).
+# 32 символа: строчные латинские буквы и дефис (для FLASK_SECRET_KEY при генерации).
+# В репозитории vpconnect-manage в settings.env — длинный dev-плейсхолдер (≠ 32): его нужно заменить.
+VPMANAGE_STOCK_FLASK_SECRET='dev-selfvpn-change-in-production-to-long-random-secret'
+
 gen_flask_secret_key() (
   set +o pipefail 2>/dev/null || true
   LC_ALL=C tr -dc 'a-z-' </dev/urandom 2>/dev/null | head -c 32
@@ -363,11 +366,15 @@ run_debian() {
       flask_secret="$(vp_strip_settings_value "$flask_secret")"
     fi
   fi
-  if [[ -z "${flask_secret:-}" ]]; then
+  # Пусто, слишком короткий секрет, или штатный dev-шаблон из git — генерируем свой (32 символа [a-z-]).
+  if [[ -z "${flask_secret:-}" ]] || [[ ${#flask_secret} -lt 32 ]] \
+    || [[ "$flask_secret" == "$VPMANAGE_STOCK_FLASK_SECRET" ]]; then
+    if [[ -n "${flask_secret:-}" ]]; then
+      printf '%s\n' "FLASK_SECRET_KEY из репозитория не подходит (короче 32 символов или dev-плейсхолдер) — генерирую новый." >&2
+    fi
     flask_secret="$(gen_flask_secret_key)"
     [[ ${#flask_secret} -eq 32 ]] || die "Не удалось сгенерировать FLASK_SECRET_KEY (нужно 32 символа)"
   else
-    [[ ${#flask_secret} -eq 32 ]] || die "В settings.env некорректная длина FLASK_SECRET_KEY (нужно 32 символа)"
     printf '%s\n' "Сохранён FLASK_SECRET_KEY из существующего settings.env (повторный запуск)." >&2
   fi
 
