@@ -20,9 +20,10 @@
 #
 # Сначала stdout: result:…; message:… и поля; при --export — строки export …; пояснения — stderr.
 #
-#   --mtproxy-port N   UDP-порт прокси (по умолчанию 443)
-#   --export           после result вывести export VPCONFIGURE_MTPROXY_*
-#   --persist [FILE]   записать переменные в /root/.vpconnect-configure.env (или FILE)
+#   --mtproxy-port N      UDP-порт прокси (по умолчанию 443)
+#   --mtproxy-secret HEX  опционально: 32 hex или dd+32 hex; неверный — случайный + предупреждение в stderr
+#   --export              после result вывести export VPCONFIGURE_MTPROXY_*
+#   --persist [FILE]      записать переменные в /root/.vpconnect-configure.env (или FILE)
 #
 # Нужна VPCONFIGURE_GIT_BRANCH из 01_getosversion.sh.
 # Пакет git не ставится здесь — только в 02_gitinstall.sh (цепочка 00–03 обязательна).
@@ -74,10 +75,12 @@ usage() {
 Установка MTProxy (ветка debian). Нужны VPCONFIGURE_DOMAIN; пути WG из export, из
 ${DEFAULT_PERSIST_FILE} или умолчания ${WG_PRIV_DEFAULT} и ${WG_CLIENT_DIR_DEFAULT} (каталоги/ключ создаются при необходимости).
 
-  --mtproxy-port N   Порт UDP (по умолчанию ${DEFAULT_MTPROXY_PORT})
+  --mtproxy-port N      Порт UDP (по умолчанию ${DEFAULT_MTPROXY_PORT})
+  --mtproxy-secret HEX  Секрет: 32 шестнадцатеричных символа или dd<32 hex> (как в tg://proxy).
+                        Неверное значение — случайный секрет и предупреждение в stderr.
 
-  --export           Строки export VPCONFIGURE_MTPROXY_* после result
-  --persist [FILE]   Сохранить переменные в env-файл (${DEFAULT_PERSIST_FILE} по умолчанию)
+  --export              Строки export VPCONFIGURE_MTPROXY_* после result
+  --persist [FILE]      Сохранить переменные в env-файл (${DEFAULT_PERSIST_FILE} по умолчанию)
 
   -h, --help
 
@@ -194,8 +197,41 @@ emit_mtproxy_exports() {
   printf 'export VPCONFIGURE_MTPROXY_INSTALL_DIR=%q\n' "$4"
 }
 
+# MTProxy: -S принимает 32 hex-символа (16 байт); в ссылке tg:// префикс dd перед тем же hex.
+gen_mtproxy_secret_hex() (
+  set +o pipefail 2>/dev/null || true
+  head -c 16 /dev/urandom | xxd -ps
+)
+
+# stdout: нормализованный 32-символьный hex; код 1 — не подходит.
+mtproxy_normalize_secret_or_fail() {
+  local raw=$1
+  raw=$(printf '%s' "$raw" | tr -d ' \t\r\n' | tr '[:upper:]' '[:lower:]')
+  if [[ "$raw" =~ ^dd[0-9a-f]{32}$ ]]; then
+    printf '%s' "${raw:2}"
+    return 0
+  fi
+  if [[ "$raw" =~ ^[0-9a-f]{32}$ ]]; then
+    printf '%s' "$raw"
+    return 0
+  fi
+  return 1
+}
+
+_write_mtproxy_secret_file() {
+  local path=$1
+  local hex=$2
+  local msg=$3
+  umask 077
+  printf '%s' "$hex" >"$path"
+  umask 022
+  chmod 600 -- "$path"
+  printf '%s\n' "$msg" >&2
+}
+
 run_debian() {
   local opt_port=''
+  local opt_secret=''
   local mode_export=0
   local persist=0
   local persist_file=$DEFAULT_PERSIST_FILE
@@ -205,6 +241,11 @@ run_debian() {
       --mtproxy-port)
         [[ $# -ge 2 ]] || die "После --mtproxy-port нужен номер порта"
         opt_port=$2
+        shift 2
+        ;;
+      --mtproxy-secret)
+        [[ $# -ge 2 ]] || die "После --mtproxy-secret нужен токен (32 hex или dd+32 hex)"
+        opt_secret=$2
         shift 2
         ;;
       --export)
@@ -279,17 +320,25 @@ run_debian() {
   ensure_wg_private_and_client_paths "$wg_priv" "$wg_conf_dir"
 
   local SECRET
-  if [[ -f "$secret_path" && -s "$secret_path" ]]; then
-    SECRET=$(tr -d ' \t\r\n' <"$secret_path")
+  if [[ -n "$opt_secret" ]]; then
+    if SECRET=$(mtproxy_normalize_secret_or_fail "$opt_secret"); then
+      _write_mtproxy_secret_file "$secret_path" "$SECRET" "Записан секрет из опции --mtproxy-secret: ${secret_path}"
+    else
+      printf '%s\n' "Указанный --mtproxy-secret не подходит (нужны 32 hex или dd и 32 hex); генерирую случайный секрет." >&2
+      SECRET=$(gen_mtproxy_secret_hex)
+      SECRET=$(printf '%s' "$SECRET" | tr -d '\r\n')
+      [[ -n "$SECRET" && "$SECRET" =~ ^[0-9a-f]{32}$ ]] || die "Не удалось сгенерировать секрет MTProxy"
+      _write_mtproxy_secret_file "$secret_path" "$SECRET" "Записан новый секрет: ${secret_path}"
+    fi
+  elif [[ -f "$secret_path" && -s "$secret_path" ]]; then
+    SECRET=$(tr -d ' \t\r\n' <"$secret_path" | tr '[:upper:]' '[:lower:]')
     [[ -n "$SECRET" ]] || die "Файл секрета пуст: ${secret_path}"
     printf '%s\n' "Использую существующий секрет из ${secret_path}" >&2
   else
-    SECRET=$(head -c 16 /dev/urandom | xxd -ps)
-    umask 077
-    printf '%s' "$SECRET" >"$secret_path"
-    umask 022
-    chmod 600 -- "$secret_path"
-    printf '%s\n' "Записан новый секрет: ${secret_path}" >&2
+    SECRET=$(gen_mtproxy_secret_hex)
+    SECRET=$(printf '%s' "$SECRET" | tr -d '\r\n')
+    [[ -n "$SECRET" && "$SECRET" =~ ^[0-9a-f]{32}$ ]] || die "Не удалось сгенерировать секрет MTProxy"
+    _write_mtproxy_secret_file "$secret_path" "$SECRET" "Записан новый секрет: ${secret_path}"
   fi
 
   if [[ ! -d "${MTP_ROOT}/.git" ]]; then

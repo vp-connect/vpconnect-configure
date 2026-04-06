@@ -50,8 +50,8 @@
 | **`VPCONFIGURE_WG_CLIENT_CONFIG_PATH`** | Каталог для **клиентских конфигов** и связанных артефактов (в т.ч. ожидаемый путь к **`mtproxy.link`** рядом с конфигами). По умолчанию **`/usr/wireguard/client_config`**. |
 | **`VPCONFIGURE_WG_SERVER_PUBLIC_KEY_PATH`** | Полный путь к **файлу с публичным ключом сервера** WireGuard. Заполняется **`06_setwireguard.sh`**. |
 | **`VPCONFIGURE_WG_PRIVATE_KEY_PATH`** | Полный путь к **приватному ключу сервера** (по умолчанию **`/etc/wireguard/privatekey`**). Задаёт **`06`**; **`07`**/**`08`** могут подставлять умолчания, если переменная пуста. |
-| **`VPCONFIGURE_MTPROXY_PORT`** | **UDP‑порт** MTProxy на сервере. Задаёт **`07_setmtproxy.sh`** (по умолчанию **443**). |
-| **`VPCONFIGURE_MTPROXY_SECRET_PATH`** | Путь к файлу **секрета** прокси (hex и т.д.). Задаёт **`07`** (рядом с каталогом приватного ключа WG). |
+| **`VPCONFIGURE_MTPROXY_PORT`** | **UDP‑порт** MTProxy на сервере. Задаёт **`07_setmtproxy.sh`** (CLI: **`--mtproxy-port`**, по умолчанию **443**). |
+| **`VPCONFIGURE_MTPROXY_SECRET_PATH`** | Путь к файлу **секрета** для **`mtproto-proxy -S`**: ровно **32** шестнадцатеричных символа (**16** байт). Задаёт **`07`** (файл рядом с каталогом приватного ключа WG). Опционально при запуске **`07`**: **`--mtproxy-secret HEX`** — тот же **32** hex **или** строка как в **`tg://proxy`** (**`dd`** + **32** hex); пробелы обрезаются, регистр не важен. Неверный токен: **`07`** генерирует случайный секрет и пишет предупреждение в **stderr**. Без **`--mtproxy-secret`**: если файл уже есть — используется он, иначе секрет генерируется. |
 | **`VPCONFIGURE_MTPROXY_LINK_PATH`** | Путь к файлу **`mtproxy.link`** (строка **`tg://proxy?...`**). Задаёт **`07`**. |
 | **`VPCONFIGURE_MTPROXY_INSTALL_DIR`** | Каталог **исходников/сборки** MTProxy (по умолчанию **`/opt/MTProxy`**). Задаёт **`07`**. |
 | **`VPCONFIGURE_VPM_HTTP_PORT`** | **TCP‑порт** HTTP панели VPManage (**gunicorn**). Задаёт **`08_setvpmanage.sh`** (по умолчанию **80**). |
@@ -101,7 +101,7 @@
 | `04_setsystemaccess.sh` | Пароль root, SSH‑порт, ключ |
 | `05_setdomain.sh` | Hostname / домен |
 | `06_setwireguard.sh` | WireGuard |
-| `07_setmtproxy.sh` | MTProxy |
+| `07_setmtproxy.sh` | MTProxy (**`--mtproxy-port`**, опционально **`--mtproxy-secret`**, **`--export`**, **`--persist`**) |
 | `08_setvpmanage.sh` | VPManage |
 
 ## Порядок запуска (пример)
