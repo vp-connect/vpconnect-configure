@@ -4,9 +4,11 @@
 # Клонирует или обновляет репозиторий конфигурации и переключается на ветку
 # VPCONFIGURE_GIT_BRANCH (freebsd | debian | centos), затем git pull.
 # После клонирования каталог .git удаляется (на целевой системе история не нужна).
-# Если целевой путь уже есть и это git-репозиторий — выполняется fetch/pull. Иначе при непустом
-# пути (файл, каталог с файлами) он удаляется и выполняется новое клонирование; пустой каталог
-# сохраняется и в него клонируют.
+# Если целевой путь уже есть и это git-репозиторий — выполняется fetch/pull. Если каталог непустой,
+# но .git нет и есть маркер `01_getosversion.sh` (типичный повторный запуск после remove_git_dir) —
+# выполняется клон во временный каталог и копирование поверх без rm -rf целевого дерева. Иначе при
+# непустом чужом пути (файл, каталог с файлами без маркера) он удаляется и выполняется новое клонирование;
+# пустой каталог сохраняется и в него клонируют.
 #
 # Сначала stdout: одна строка result:…; message:… (и доп. поля), пояснения — stderr.
 #
@@ -160,6 +162,53 @@ remove_git_dir() {
   rm -rf -- "$gitmeta" || die "Не удалось удалить ${gitmeta}"
 }
 
+# Повторный 03 после первого клона с удалённым .git: обновить файлы, не стирая каталог.
+refresh_bare_configure_tree() {
+  local repo=$1
+  local dir=$2
+  local branch=$3
+  local tmp err short_local
+
+  tmp=$(mktemp -d) || die "Не удалось создать временный каталог (mktemp -d)"
+  trap 'rm -rf -- "$tmp"' EXIT
+
+  if ! err=$(GIT_TERMINAL_PROMPT=0 git clone \
+    --branch "$branch" \
+    --single-branch \
+    --depth 1 \
+    --origin origin \
+    "$repo" "${tmp}/repo" 2>&1); then
+    printf '%s\n' "$err" >&2
+    case "$err" in
+      *"Remote branch"* | *"remote branch"* | *"not found in upstream"* | *"Couldn't find remote ref"*)
+        trap - EXIT
+        rm -rf -- "$tmp"
+        die "На удалённом репозитории нет ветки ${branch}, создайте её на origin или проверьте URL"
+        ;;
+      *"Could not resolve host"* | *"unable to access"* | *"Connection refused"* | *"timed out"* | *"Network is unreachable"* | *"Could not connect"*)
+        trap - EXIT
+        rm -rf -- "$tmp"
+        die "Нет доступа к репозиторию по сети или DNS, проверьте соединение и URL"
+        ;;
+      *"Authentication failed"* | *"could not read Username"* | *"403"* | *"401"*)
+        trap - EXIT
+        rm -rf -- "$tmp"
+        die "Отказ доступа к репозиторию, проверьте права и credentials для ${repo}"
+        ;;
+    esac
+    trap - EXIT
+    rm -rf -- "$tmp"
+    die "git clone (обновление без .git) не выполнен: $(vp_sanitize_msg "$err")"
+  fi
+
+  short_local="$(git -C "${tmp}/repo" rev-parse --short HEAD 2>/dev/null || printf '?')"
+  cp -a "${tmp}/repo/." "$dir/" || die "Не удалось скопировать обновления в ${dir}"
+  remove_git_dir "${tmp}/repo"
+  trap - EXIT
+  rm -rf -- "$tmp"
+  printf '%s' "$short_local"
+}
+
 update_repo() {
   local dir=$1
   local repo=$2
@@ -245,10 +294,13 @@ main() {
     printf 'Обновление существующего репозитория: %s\n' "$target_dir" >&2
     update_repo "$target_dir" "$repo" "$branch"
     short="$(git -C "$target_dir" rev-parse --short HEAD 2>/dev/null || printf '?')"
+  elif [[ -d "$target_dir" ]] && dir_is_nonempty "$target_dir" && [[ -f "${target_dir}/01_getosversion.sh" ]]; then
+    printf 'Обновление каталога без .git (повторный запуск): %s\n' "$target_dir" >&2
+    short="$(refresh_bare_configure_tree "$repo" "$target_dir" "$branch")"
   else
     if [[ -e "$target_dir" ]]; then
       if [[ -f "$target_dir" || -L "$target_dir" ]] || { [[ -d "$target_dir" ]] && dir_is_nonempty "$target_dir"; }; then
-        printf 'Путь %s уже занят (не git или не пустой каталог), удаляю и клонирую заново\n' "$target_dir" >&2
+        printf 'Путь %s уже занят (не git или не пустой каталог без маркера vpconnect-configure), удаляю и клонирую заново\n' "$target_dir" >&2
         rm -rf -- "$target_dir" || die "Не удалось удалить: $target_dir"
       fi
     fi

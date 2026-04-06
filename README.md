@@ -59,16 +59,23 @@
 | **`VPCONFIGURE_VPM_INSTALL_PATH`** | Каталог установки приложения (по умолчанию **`/opt/VPManage`**). Задаёт **`08`**. |
 | **`VPCONFIGURE_VPM_SYSTEMD_SERVICE`** | Имя unit **systemd** без `.service` (по умолчанию **`vpconnect-manage`**). Задаёт **`08`**. |
 
+**Результат `06_setwireguard.sh`** (имя интерфейса не задаётся флагами; по умолчанию ожидается **`wg0`**, иначе определяется автоматически):
+
+| Переменная | Назначение |
+|------------|------------|
+| **`VPCONFIGURE_WIREGUARD_INTERFACE_NAME`** | **Записывается `06`:** имя интерфейса WireGuard после установки — файл **`/etc/wireguard/<имя>.conf`**, unit **`wg-quick@<имя>`**. Логика: **`wg/detect_wg_iface.inc.sh`** (`wg show interfaces` с приоритетом **`wg0`**, иначе единственный **`/etc/wireguard/wg*.conf`**, иначе **`wg0`**). Скрипты **`wg/*.sh`** и **`08`** читают эту переменную из окружения/`.vpconnect-configure.env`; если её ещё нет — применяют ту же функцию **`detect_wg_interface_name`**. |
+| **`VPCONFIGURE_WG_WAN_IFACE`** | Исходящий интерфейс для **MASQUERADE** в **PostUp**. Не задана — при подъёме туннеля подставляется интерфейс **default route** (`ip -4 route show default`). |
+
 **Опционально для `08_setvpmanage.sh`** (значения уходят в **`settings.env`** vpconnect-manage; если не заданы — берутся умолчания из **`06`** / **`VPCONFIGURE_DOMAIN`**):
 
 | Переменная | Назначение |
 |------------|------------|
-| **`VPCONFIGURE_WG_CONF_PATH`** | Путь к **`wg0.conf`**. Не задана → **`/etc/wireguard/wg0.conf`**. Задана **пустой строкой** → интеграция WireGuard в UI панели выключена. |
-| **`VPCONFIGURE_WIREGUARD_SYNC_INTERVAL_MINUTES`** | Интервал синхронизации JSON с **`wg0.conf`** (минуты); по умолчанию **5**. **0** — только при старте и при открытии дашборда. |
-| **`VPCONFIGURE_WIREGUARD_INTERFACE_NAME`** | Имя интерфейса для **`wg-quick`** / **`wg syncconf`** (по умолчанию **`wg0`**). |
+| **`VPCONFIGURE_WG_CONF_PATH`** | Путь к конфигу WireGuard. Не задана → **`/etc/wireguard/<имя>.conf`**, где **`<имя>`** — **`VPCONFIGURE_WIREGUARD_INTERFACE_NAME`** после **`06`**, либо результат **`detect_wg_interface_name`** (как в **`06`**). Задана **пустой строкой** → интеграция WireGuard в UI панели выключена. |
+| **`VPCONFIGURE_WIREGUARD_SYNC_INTERVAL_MINUTES`** | Интервал синхронизации JSON с конфигом WG (минуты); по умолчанию **5**. **0** — только при старте и при открытии дашборда. |
+| **`VPCONFIGURE_WIREGUARD_INTERFACE_NAME`** | Если уже выставлена **`06`** — используется она. Если пусто (например, **`08`** без предшествующего **`06`** в той же сессии) — **`08`** подставляет то же автоматическое имя, что и **`detect_wg_interface_name`**. |
 | **`VPCONFIGURE_WIREGUARD_ENDPOINT`** | Полный **`host:port`** для клиентских конфигов (если задан, хост/порт ниже для Endpoint не комбинируются). |
 | **`VPCONFIGURE_WIREGUARD_PUBLIC_HOST`** | Публичный хост для Endpoint, если **`WIREGUARD_ENDPOINT`** пуст (иначе по умолчанию **`VPCONFIGURE_DOMAIN`**). |
-| **`VPCONFIGURE_WIREGUARD_LISTEN_PORT`** | UDP‑порт для Endpoint при пустом **`WIREGUARD_ENDPOINT`**; **0** — взять **`ListenPort`** из **`wg0.conf`**, иначе при отсутствии — **51820**. По умолчанию подставляется **`VPCONFIGURE_WG_PORT`**, иначе **0**. |
+| **`VPCONFIGURE_WIREGUARD_LISTEN_PORT`** | UDP‑порт для Endpoint при пустом **`WIREGUARD_ENDPOINT`**; **0** — взять **`ListenPort`** из конфига WG, иначе при отсутствии — **51820**. По умолчанию подставляется **`VPCONFIGURE_WG_PORT`**, иначе **0**. |
 | **`VPCONFIGURE_WIREGUARD_DNS`** | DNS в клиентском **`[Interface]`** (по умолчанию **8.8.8.8**). |
 | **`VPCONFIGURE_WIREGUARD_CLIENT_CONFIG_DIR`** | Каталог клиентских **`.conf`**; иначе **`VPCONFIGURE_WG_CLIENT_CONFIG_PATH`**. |
 | **`VPCONFIGURE_WIREGUARD_CLIENT_KEYS_DIR`** | Каталог ключей клиентов; иначе **`VPCONFIGURE_WG_CLIENT_CERT_PATH`**. |

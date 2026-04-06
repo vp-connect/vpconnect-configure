@@ -22,13 +22,19 @@
 
 set -e
 
+_wg_src=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")
+_wg_dir=$(cd "$(dirname "$_wg_src")" && pwd)
+# shellcheck source=detect_wg_iface.inc.sh
+source "${_wg_dir}/detect_wg_iface.inc.sh"
+
 if [ $# -ne 1 ]; then
     echo "Использование: $0 <имя_клиента>"
     exit 1
 fi
 
 NAME=$1
-WG_CONF="/etc/wireguard/wg0.conf"
+WG_IFACE="${VPCONFIGURE_WIREGUARD_INTERFACE_NAME:-$(detect_wg_interface_name)}"
+WG_CONF="${VPCONFIGURE_WG_CONF_PATH:-/etc/wireguard/${WG_IFACE}.conf}"
 KEY_DIR="/usr/wireguard/client_sert"
 CONFIG_DIR="/usr/wireguard/client_config"
 QR_DIR="$CONFIG_DIR/qr"
@@ -105,7 +111,7 @@ qrencode -t ansiutf8 < "$CLIENT_CONF" > "$QR_FILE"
 chmod 644 "$QR_FILE"
 
 # Применение изменений без перезапуска
-wg syncconf wg0 <(wg-quick strip wg0)
+wg syncconf "$WG_IFACE" <(wg-quick strip "$WG_IFACE")
 
 echo "✅ Клиент $NAME успешно создан."
 echo "   IP клиента: $CLIENT_IP"

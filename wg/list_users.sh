@@ -15,7 +15,12 @@
 #
 # Используется из wg.sh с флагом --names-only для массовых enable/disable --all.
 
-WG_CONF="/etc/wireguard/wg0.conf"
+_wg_src=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")
+_wg_dir=$(cd "$(dirname "$_wg_src")" && pwd)
+# shellcheck source=detect_wg_iface.inc.sh
+source "${_wg_dir}/detect_wg_iface.inc.sh"
+WG_IFACE="${VPCONFIGURE_WIREGUARD_INTERFACE_NAME:-$(detect_wg_interface_name)}"
+WG_CONF="${VPCONFIGURE_WG_CONF_PATH:-/etc/wireguard/${WG_IFACE}.conf}"
 COLOR_ENABLE="\e[32m"
 COLOR_DISABLE="\e[31m"
 COLOR_RESET="\e[0m"

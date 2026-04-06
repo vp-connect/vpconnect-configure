@@ -2,7 +2,7 @@
 # wg.sh
 #
 # Удобная обёртка над установленными в /usr/local/bin скриптами управления клиентами WireGuard.
-# Не часть нумерованной цепочки 00–08; предполагается уже настроенный wg0 (см. 06_setwireguard.sh).
+# Не часть нумерованной цепочки 00–08; предполагается уже поднятый WireGuard (06; имя — VPCONFIGURE_WIREGUARD_INTERFACE_NAME из env или detect_wg_interface_name в дочерних скриптах).
 #
 # Вызываемые пути (должны существовать и быть исполняемыми):
 #   /usr/local/bin/create_client.sh, delete_client.sh, toggle_client.sh, list_users.sh
