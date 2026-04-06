@@ -294,11 +294,6 @@ run_debian() {
   wg_listen_port="${VPCONFIGURE_WIREGUARD_LISTEN_PORT:-${VPCONFIGURE_WG_PORT:-0}}"
   wg_dns="${VPCONFIGURE_WIREGUARD_DNS:-8.8.8.8}"
 
-  export VPCONFIGURE_VPM_HTTP_PORT="$opt_http"
-  export VPCONFIGURE_VPM_PASSWORD="$app_pw"
-  export VPCONFIGURE_VPM_INSTALL_PATH="$VPM_INSTALL"
-  export VPCONFIGURE_VPM_SYSTEMD_SERVICE="$SYSTEMD_SERVICE"
-
   require_root
 
   if [[ ! -f "$VPCONFIGURE_MTPROXY_SECRET_PATH" ]]; then
@@ -375,6 +370,11 @@ run_debian() {
     [[ ${#flask_secret} -eq 32 ]] || die "В settings.env некорректная длина FLASK_SECRET_KEY (нужно 32 символа)"
     printf '%s\n' "Сохранён FLASK_SECRET_KEY из существующего settings.env (повторный запуск)." >&2
   fi
+
+  export VPCONFIGURE_VPM_HTTP_PORT="$opt_http"
+  export VPCONFIGURE_VPM_PASSWORD="$app_pw"
+  export VPCONFIGURE_VPM_INSTALL_PATH="$VPM_INSTALL"
+  export VPCONFIGURE_VPM_SYSTEMD_SERVICE="$SYSTEMD_SERVICE"
 
   if [[ ! -d "${VPM_INSTALL}/.venv" ]]; then
     printf '%s\n' "VPManage: создание .venv…" >&2

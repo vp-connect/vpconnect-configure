@@ -9,7 +9,7 @@
 # Параметры (все опциональны, порядок неважен):
 #   --domain STRING     Явное значение (FQDN или IP), даже если это IP
 #   --domain-client-key KEY  Если задано и --domain пуст: GET к REST с key=…; при ошибке — внешний IP и result:warning
-#   (если оба не заданы — только внешний IP, result:success)
+#   (если оба не заданы — только внешний IP, result:success; IP по возможности IPv4: curl -4 и ipv4.*-сервисы)
 #
 # Как у 01_getosversion.sh:
 #   --export   вторая строка stdout: export VPCONFIGURE_DOMAIN=…
@@ -93,17 +93,25 @@ strip_outer_space() {
   printf '%s' "$s"
 }
 
+# Публичный адрес для VPCONFIGURE_DOMAIN: предпочитаем IPv4 (для MTProxy/WG Endpoint и т.д.).
+# curl -4 — соединение по IPv4; ответы с «:» отбрасываем как IPv6.
 fetch_public_ip() {
   local ip
-  ip=$(curl -fsS --max-time 10 https://ifconfig.me 2>/dev/null || true)
+  ip=$(curl -fsS -4 --max-time 10 https://ipv4.icanhazip.com 2>/dev/null || true)
   ip=$(printf '%s' "$ip" | tr -d '\r\n' | head -c 256)
-  if [[ -n "$ip" && "$ip" != *' '* ]]; then
+  if [[ -n "$ip" && "$ip" != *' '* && "$ip" != *':'* ]]; then
     printf '%s' "$ip"
     return 0
   fi
-  ip=$(curl -fsS --max-time 10 https://icanhazip.com 2>/dev/null || true)
+  ip=$(curl -fsS -4 --max-time 10 https://api.ipify.org 2>/dev/null || true)
   ip=$(printf '%s' "$ip" | tr -d '\r\n' | head -c 256)
-  if [[ -n "$ip" && "$ip" != *' '* ]]; then
+  if [[ -n "$ip" && "$ip" != *' '* && "$ip" != *':'* ]]; then
+    printf '%s' "$ip"
+    return 0
+  fi
+  ip=$(curl -fsS -4 --max-time 10 https://ifconfig.me/ip 2>/dev/null || true)
+  ip=$(printf '%s' "$ip" | tr -d '\r\n' | head -c 256)
+  if [[ -n "$ip" && "$ip" != *' '* && "$ip" != *':'* ]]; then
     printf '%s' "$ip"
     return 0
   fi
