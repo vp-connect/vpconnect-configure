@@ -14,10 +14,9 @@
 
 | Что | В этих скриптах | В `06_setwireguard.sh` (умолчания) |
 |-----|-----------------|-------------------------------------|
-| Конфиг интерфейса | `/etc/wireguard/<имя>.conf` (см. выше) | то же после **`06`** |
-| Каталог ключей клиентов | `/usr/wireguard/client_sert` ⚠ | `/usr/wireguard/client_cert` |
-
-Имя каталога **`client_sert`** в коде — опечатка относительно **`client_cert`** в основном скрипте. Перед продакшеном выровняйте **`KEY_DIR`** в `create_client.sh` / `delete_client.sh` под фактический путь на сервере (или наоборот).
+| Конфиг интерфейса | `VPCONFIGURE_WG_CONF_PATH` или `/etc/wireguard/<имя>.conf` | `/etc/wireguard/<имя>.conf` |
+| Каталог ключей клиентов | `VPCONFIGURE_WG_CLIENT_CERT_PATH` или `/usr/wireguard/client_cert` | `/usr/wireguard/client_cert` |
+| Каталог клиентских конфигов | `VPCONFIGURE_WG_CLIENT_CONFIG_PATH` или `/usr/wireguard/client_config` | `/usr/wireguard/client_config` |
 
 ## Установка на сервер
 
@@ -44,7 +43,12 @@ for f in /path/to/vpconnect-configure/wg/*.sh; do sudo ln -sf "$f" /usr/local/bi
 
 ## Важно для `create_client.sh`
 
-Внутри файла зашиты **`SERVER_PUBLIC_KEY`**, **`SERVER_ENDPOINT`**, **`DNS`**: их нужно **заменить** на реальные публичный ключ сервера, `IP:порт` WG и желаемый DNS для клиентов. Подсеть клиентских адресов зашита как **`10.0.0.0/24`** (поиск свободного хоста с `10.0.0.2` … `10.0.0.254`).
+`create_client.sh` не требует ручного редактирования:
+
+- Публичный ключ сервера берётся из `VPCONFIGURE_WG_SERVER_PUBLIC_KEY_PATH`, а при отсутствии — через `wg show <iface> public-key`.
+- Endpoint берётся из `VPCONFIGURE_WIREGUARD_ENDPOINT`, а при отсутствии — из `VPCONFIGURE_DOMAIN:VPCONFIGURE_WG_PORT`.
+- DNS берётся из `VPCONFIGURE_WIREGUARD_DNS` (по умолчанию `8.8.8.8`).
+- Подсеть для клиентских адресов выводится из `Address = ...` в конфиге сервера (например `10.8.0.1/24` → клиенты `10.8.0.2..254`).
 
 ## Формат маркеров в конфиге интерфейса
 

@@ -7,8 +7,8 @@
 #
 # Использование: один аргумент — имя клиента (как в маркере # Client:).
 #
-# Пути должны совпадать с create_client.sh:
-#   WG_CONF, KEY_DIR=/usr/wireguard/client_sert, CONFIG_DIR, QR_DIR
+# Пути/параметры должны совпадать с create_client.sh:
+# берутся из VPCONFIGURE_* или автоопределяются; ключи/конфиги по умолчанию в /usr/wireguard/client_cert и /usr/wireguard/client_config.
 #
 # Зависимости: wg, wg-quick; права root.
 
@@ -19,17 +19,41 @@ _wg_dir=$(cd "$(dirname "$_wg_src")" && pwd)
 # shellcheck source=detect_wg_iface.inc.sh
 source "${_wg_dir}/detect_wg_iface.inc.sh"
 
+expand_tilde() {
+    local p=$1
+    if [[ "$p" == '~' || "$p" == ~/* ]]; then
+        p="${p/\~/$HOME}"
+    fi
+    printf '%s' "$p"
+}
+
+vpconfigure_source_saved_env() {
+    local f=${1:-/root/.vpconnect-configure.env}
+    f="$(expand_tilde "$f")"
+    [[ -r "$f" ]] || return 0
+    # shellcheck disable=SC1090
+    set -a
+    . "$f"
+    set +a
+}
+
 if [ $# -ne 1 ]; then
     echo "Использование: $0 <имя_клиента>"
     exit 1
 fi
 
 NAME=$1
+vpconfigure_source_saved_env "/root/.vpconnect-configure.env"
 WG_IFACE="${VPCONFIGURE_WIREGUARD_INTERFACE_NAME:-$(detect_wg_interface_name)}"
 WG_CONF="${VPCONFIGURE_WG_CONF_PATH:-/etc/wireguard/${WG_IFACE}.conf}"
-KEY_DIR="/usr/wireguard/client_sert"
-CONFIG_DIR="/usr/wireguard/client_config"
+KEY_DIR="${VPCONFIGURE_WG_CLIENT_CERT_PATH:-/usr/wireguard/client_cert}"
+CONFIG_DIR="${VPCONFIGURE_WG_CLIENT_CONFIG_PATH:-/usr/wireguard/client_config}"
 QR_DIR="$CONFIG_DIR/qr"
+
+WG_CONF="$(expand_tilde "$WG_CONF")"
+KEY_DIR="$(expand_tilde "$KEY_DIR")"
+CONFIG_DIR="$(expand_tilde "$CONFIG_DIR")"
+QR_DIR="$(expand_tilde "$QR_DIR")"
 
 # Проверка существования клиента
 if ! grep -q "^# Client: $NAME$" "$WG_CONF"; then

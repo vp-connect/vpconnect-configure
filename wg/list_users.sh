@@ -19,8 +19,30 @@ _wg_src=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOU
 _wg_dir=$(cd "$(dirname "$_wg_src")" && pwd)
 # shellcheck source=detect_wg_iface.inc.sh
 source "${_wg_dir}/detect_wg_iface.inc.sh"
+set -e
+
+expand_tilde() {
+    local p=$1
+    if [[ "$p" == '~' || "$p" == ~/* ]]; then
+        p="${p/\~/$HOME}"
+    fi
+    printf '%s' "$p"
+}
+
+vpconfigure_source_saved_env() {
+    local f=${1:-/root/.vpconnect-configure.env}
+    f="$(expand_tilde "$f")"
+    [[ -r "$f" ]] || return 0
+    # shellcheck disable=SC1090
+    set -a
+    . "$f"
+    set +a
+}
+
+vpconfigure_source_saved_env "/root/.vpconnect-configure.env"
 WG_IFACE="${VPCONFIGURE_WIREGUARD_INTERFACE_NAME:-$(detect_wg_interface_name)}"
 WG_CONF="${VPCONFIGURE_WG_CONF_PATH:-/etc/wireguard/${WG_IFACE}.conf}"
+WG_CONF="$(expand_tilde "$WG_CONF")"
 COLOR_ENABLE="\e[32m"
 COLOR_DISABLE="\e[31m"
 COLOR_RESET="\e[0m"
