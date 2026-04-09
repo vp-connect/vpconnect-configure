@@ -324,7 +324,8 @@ run_debian() {
 
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
-  apt-get install -y -qq wireguard wireguard-tools
+  # wg-quick использует iptables в PostUp/PostDown (NAT/forward). На минимальных образах iptables может отсутствовать.
+  apt-get install -y -qq wireguard wireguard-tools iptables
 
   local wg_iface WG_CONF
   wg_iface=$(detect_wg_interface_name)
