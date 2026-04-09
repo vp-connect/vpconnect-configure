@@ -270,7 +270,7 @@ run_debian() {
   persist_file="$(expand_tilde "$persist_file")"
 
   local mtproxy_link_file wg_client_conf_dir wg_keys_dir login_max login_lock wg_conf_path \
-    wg_sync_min wg_if_name wg_pub_host wg_listen_port wg_dns
+    wg_sync_min wg_if_name wg_network_cidr wg_endpoint wg_pub_host wg_listen_port wg_dns
 
   mtproxy_link_file="$(expand_tilde "$VPCONFIGURE_MTPROXY_LINK_PATH")"
   wg_client_conf_dir="$(expand_tilde "${VPCONFIGURE_WIREGUARD_CLIENT_CONFIG_DIR:-$VPCONFIGURE_WG_CLIENT_CONFIG_PATH}")"
@@ -293,9 +293,21 @@ run_debian() {
     wg_conf_path="/etc/wireguard/${wg_if_name}.conf"
   fi
   wg_sync_min="${VPCONFIGURE_WIREGUARD_SYNC_INTERVAL_MINUTES:-5}"
+  wg_network_cidr="${VPCONFIGURE_WIREGUARD_NETWORK_CIDR:-}"
+  wg_endpoint="${VPCONFIGURE_WIREGUARD_ENDPOINT:-}"
   wg_pub_host="${VPCONFIGURE_WIREGUARD_PUBLIC_HOST:-${VPCONFIGURE_DOMAIN}}"
   wg_listen_port="${VPCONFIGURE_WIREGUARD_LISTEN_PORT:-${VPCONFIGURE_WG_PORT:-0}}"
   wg_dns="${VPCONFIGURE_WIREGUARD_DNS:-8.8.8.8}"
+
+  if [[ -z "$wg_network_cidr" && -n "$wg_conf_path" && -f "$wg_conf_path" ]]; then
+    local _addr
+    _addr=$(awk -F= '/^[[:space:]]*Address[[:space:]]*=/ {gsub(/[[:space:]]/,"",$2); print $2; exit}' "$wg_conf_path" 2>/dev/null || true)
+    if [[ -n "${_addr:-}" ]]; then
+      # Преобразуем Address (например 10.8.0.1/24) → сеть 10.8.0.0/24.
+      # Используем stdlib ipaddress (python3 уже ставится выше).
+      wg_network_cidr=$(python3 -c 'import ipaddress,sys; print(ipaddress.ip_interface(sys.argv[1]).network)' "$_addr" 2>/dev/null || true)
+    fi
+  fi
 
   require_root
 
@@ -426,6 +438,12 @@ WIREGUARD_SYNC_INTERVAL_MINUTES=${wg_sync_min}
 
 # Имя интерфейса для wg-quick strip / wg syncconf (как в 06 / VPCONFIGURE_WIREGUARD_INTERFACE_NAME).
 WIREGUARD_INTERFACE_NAME=${wg_if_name}
+
+# CIDR сети WG (как Address в серверном wg0.conf), например 10.8.0.1/24. Используется для выдачи IP.
+WIREGUARD_NETWORK_CIDR=${wg_network_cidr}
+
+# Полный Endpoint для клиентских .conf (host:port). Если задан — WIREGUARD_PUBLIC_HOST и порт ниже для Endpoint не используются.
+WIREGUARD_ENDPOINT=${wg_endpoint}
 
 # Публичный FQDN или IP для Endpoint, если WIREGUARD_ENDPOINT пуст (по умолчанию VPCONFIGURE_DOMAIN).
 WIREGUARD_PUBLIC_HOST=${wg_pub_host}
