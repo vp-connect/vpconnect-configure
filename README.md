@@ -98,7 +98,7 @@
 | `01_getosversion.sh` | Семейство ОС → `VPCONFIGURE_GIT_BRANCH`, опции `--export`, `--persist` |
 | `02_gitinstall.sh` | Установка `git` по семейству |
 | `03_getconfigure.sh` | Клон/обновление репозитория |
-| `04_setsystemaccess.sh` | Пароль root, SSH‑порт, ключ |
+| `04_setsystemaccess.sh` | Пароль root, SSH‑порт, ключ (опционально **`--enable-firewall`** для управления `ufw`) |
 | `05_setdomain.sh` | Hostname / домен |
 | `06_setwireguard.sh` | WireGuard |
 | `07_setmtproxy.sh` | MTProxy (**`--mtproxy-port`**, опционально **`--mtproxy-secret`**, **`--export`**, **`--persist`**) |

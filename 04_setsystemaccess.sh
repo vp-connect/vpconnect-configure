@@ -2,8 +2,9 @@
 # 04_setsystemaccess
 #
 # Пароль root, порт SSH, публичный ключ для root (ветка debian: Debian/Ubuntu).
-# Файрвол: в начале проверяется ufw, при отсутствии — установка через apt и сразу включение (ufw --force enable)
-# после добавления правил для текущих портов SSH. При смене порта SSH: старые правила, новый порт, reload (если активен).
+# Файрвол (ufw): управление выполняется ТОЛЬКО при флаге --enable-firewall.
+# При включённом флаге: если ufw не установлен — ставим через apt, добавляем allow для текущих SSH-портов и включаем
+# (ufw --force enable). При смене порта SSH: снять старые allow, добавить новый, reload (если активен).
 # Каждый этап выполняется только если передан соответствующий параметр CLI.
 # vpconnect_install может вызывать скрипт, подставляя только нужные флаги.
 #
@@ -13,6 +14,7 @@
 #   bash ./04_setsystemaccess.sh [--new-root-password PASS | --new-root-password-file PATH]
 #                              [--new-ssh-port N]
 #                              [--ssh-public-key LINE | --ssh-public-key-file PATH]
+#                              [--enable-firewall]
 #
 # Нужна переменная VPCONFIGURE_GIT_BRANCH из 01_getosversion.sh (freebsd, debian, centos).
 # Полная логика только для debian; для freebsd и centos — предупреждение без изменений системы.
@@ -59,6 +61,8 @@ usage() {
 
   --ssh-public-key LINE          Одна строка OpenSSH public key (не сочетать с -file)
   --ssh-public-key-file PATH     Взять ключ из первой строки файла
+
+  --enable-firewall              Включить ufw и управлять правилами (иначе ufw не устанавливается/не включается)
 
   -h, --help                     Эта справка
 
@@ -110,6 +114,7 @@ remove_ufw_allow_tcp_port() {
 update_ufw_for_new_ssh_port() {
   local new_port=$1
   shift
+  command -v ufw >/dev/null 2>&1 || return 0
   local oldp
   for oldp in "$@"; do
     [[ -z "$oldp" ]] && continue
@@ -126,6 +131,14 @@ update_ufw_for_new_ssh_port() {
   else
     printf '%s\n' "ufw: не активен — правило записано, включите ufw при необходимости." >&2
   fi
+}
+
+enable_ufw_if_requested() {
+  local enabled=${1:-0}
+  if [[ "$enabled" -ne 1 ]]; then
+    return 0
+  fi
+  ensure_ufw_installed
 }
 
 collect_sshd_ports_or_fail() {
@@ -175,6 +188,7 @@ run_debian() {
   local opt_ssh_port=''
   local opt_pub_key=''
   local opt_pub_key_file=''
+  local opt_enable_firewall=0
   local have_pw_arg=0 have_pw_file_arg=0 have_pub_arg=0 have_pub_file_arg=0
 
   while [[ $# -gt 0 ]]; do
@@ -207,6 +221,10 @@ run_debian() {
         opt_pub_key_file=$2
         have_pub_file_arg=1
         shift 2
+        ;;
+      --enable-firewall)
+        opt_enable_firewall=1
+        shift
         ;;
       -h|--help)
         usage
@@ -249,7 +267,7 @@ run_debian() {
     [[ -n "$pub_line" ]] || die "Пустая строка в --ssh-public-key"
   fi
 
-  if [[ -z "$new_pw" && -z "$opt_ssh_port" && -z "$pub_line" ]]; then
+  if [[ -z "$new_pw" && -z "$opt_ssh_port" && -z "$pub_line" && "$opt_enable_firewall" -eq 0 ]]; then
     vp_result_line success "параметры не заданы, изменений нет" \
       "step_root_password:skipped" \
       "step_ssh_port:skipped" \
@@ -259,7 +277,7 @@ run_debian() {
   fi
 
   require_root
-  ensure_ufw_installed
+  enable_ufw_if_requested "$opt_enable_firewall"
 
   if [[ -n "$new_pw" ]]; then
     local ch_err
@@ -292,7 +310,9 @@ run_debian() {
       apply_ssh_port "$opt_ssh_port"
       step_ssh_port=done
       printf '%s\n' "Записан ${SSH_DROP_IN}, служба ssh перезапущена." >&2
-      update_ufw_for_new_ssh_port "$opt_ssh_port" "${old_ssh_ports[@]}"
+      if [[ "$opt_enable_firewall" -eq 1 ]]; then
+        update_ufw_for_new_ssh_port "$opt_ssh_port" "${old_ssh_ports[@]}"
+      fi
     fi
   fi
 
