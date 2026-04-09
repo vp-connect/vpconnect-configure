@@ -20,7 +20,7 @@
 #
 # Сначала stdout: result:…; message:… и поля; при --export — строки export …; пояснения — stderr.
 #
-#   --mtproxy-port N      UDP-порт прокси (по умолчанию 443)
+#   --mtproxy-port N      TCP-порт прокси (по умолчанию 443)
 #   --mtproxy-secret HEX  опционально: 32 hex или dd+32 hex; неверный — случайный + предупреждение в stderr
 #   --export              после result вывести export VPCONFIGURE_MTPROXY_*
 #   --persist [FILE]      записать переменные в /root/.vpconnect-configure.env (или FILE)
@@ -75,7 +75,7 @@ usage() {
 Установка MTProxy (ветка debian). Нужны VPCONFIGURE_DOMAIN; пути WG из export, из
 ${DEFAULT_PERSIST_FILE} или умолчания ${WG_PRIV_DEFAULT} и ${WG_CLIENT_DIR_DEFAULT} (каталоги/ключ создаются при необходимости).
 
-  --mtproxy-port N      Порт UDP (по умолчанию ${DEFAULT_MTPROXY_PORT})
+  --mtproxy-port N      Порт TCP (по умолчанию ${DEFAULT_MTPROXY_PORT})
   --mtproxy-secret HEX  Секрет: 32 шестнадцатеричных символа или dd<32 hex> (как в tg://proxy).
                         Неверное значение — случайный секрет и предупреждение в stderr.
 
@@ -131,16 +131,16 @@ ensure_wg_private_and_client_paths() {
   install -d -m 755 -- "$cdir"
 }
 
-open_mtproxy_udp_in_firewall() {
+open_mtproxy_tcp_in_firewall() {
   local port=$1
 
   if command -v ufw >/dev/null 2>&1; then
-    if vp_ufw_has_port "$port" udp; then
-      printf '%s\n' "ufw: правило UDP ${port} уже есть — повторно не добавляю." >&2
+    if vp_ufw_has_port "$port" tcp; then
+      printf '%s\n' "ufw: правило TCP ${port} уже есть — повторно не добавляю." >&2
     else
-    printf '%s\n' "Обнаружен ufw: добавляю UDP ${port} (vpconnect-mtproxy)…" >&2
+    printf '%s\n' "Обнаружен ufw: добавляю TCP ${port} (vpconnect-mtproxy)…" >&2
     local ufw_out
-    if ufw_out=$(ufw allow "${port}/udp" comment 'vpconnect-mtproxy' 2>&1); then
+    if ufw_out=$(ufw allow "${port}/tcp" comment 'vpconnect-mtproxy' 2>&1); then
       printf '%s\n' "$ufw_out" >&2
       if ufw status 2>/dev/null | grep -qiE '^Status:[[:space:]]+active'; then
         ufw reload >/dev/null 2>&1 || printf '%s\n' "ufw: reload не выполнен." >&2
@@ -152,15 +152,15 @@ open_mtproxy_udp_in_firewall() {
   fi
 
   if command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld 2>/dev/null; then
-    printf '%s\n' "firewalld: добавляю ${port}/udp…" >&2
-    firewall-cmd --permanent --add-port="${port}/udp" >/dev/null 2>&1 \
-      && firewall-cmd --add-port="${port}/udp" >/dev/null 2>&1 \
+    printf '%s\n' "firewalld: добавляю ${port}/tcp…" >&2
+    firewall-cmd --permanent --add-port="${port}/tcp" >/dev/null 2>&1 \
+      && firewall-cmd --add-port="${port}/tcp" >/dev/null 2>&1 \
       && firewall-cmd --reload >/dev/null 2>&1 \
-      && printf '%s\n' "firewalld: ${port}/udp добавлен." >&2
+      && printf '%s\n' "firewalld: ${port}/tcp добавлен." >&2
     return 0
   fi
 
-  printf '%s\n' "Откройте UDP ${port} вручную, если используется другой файрвол." >&2
+  printf '%s\n' "Откройте TCP ${port} вручную, если используется другой файрвол." >&2
 }
 
 merge_mtproxy_into_env_file() {
@@ -386,7 +386,7 @@ EOF
   systemctl restart "${SYSTEMD_NAME}" 2>/dev/null || systemctl start "${SYSTEMD_NAME}" 2>/dev/null \
     || die "Не удалось запустить ${SYSTEMD_NAME}.service"
 
-  open_mtproxy_udp_in_firewall "$opt_port"
+  open_mtproxy_tcp_in_firewall "$opt_port"
 
   vp_result_line success "MTProxy установлен и запущен" \
     "mtproxy_port:${opt_port}" \
