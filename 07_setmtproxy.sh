@@ -12,15 +12,18 @@
 # Если WG-переменные пусты: /etc/wireguard/privatekey и /usr/wireguard/client_config — каталоги создаются,
 # при отсутствии файла privatekey (и наличии wg) генерируется ключ.
 #
+# mtproto-proxy: -p — внутренний/aux-порт (в скрипте фиксирован 8888), -H — публичный TCP для клиентов Telegram.
+#   --mtproxy-port / VPCONFIGURE_MTPROXY_PORT задают именно -H (как в рабочих установках: -p 8888 -H <клиентский>).
+#
 # Перед настройкой выставляются (и экспортируются):
-#   VPCONFIGURE_MTPROXY_PORT (по умолчанию 443)
+#   VPCONFIGURE_MTPROXY_PORT (по умолчанию 443) — клиентский порт (-H)
 #   VPCONFIGURE_MTPROXY_SECRET_PATH
 #   VPCONFIGURE_MTPROXY_LINK_PATH
 #   VPCONFIGURE_MTPROXY_INSTALL_DIR=/opt/MTProxy
 #
 # Сначала stdout: result:…; message:… и поля; при --export — строки export …; пояснения — stderr.
 #
-#   --mtproxy-port N      TCP-порт прокси (по умолчанию 443)
+#   --mtproxy-port N      Публичный TCP-порт для клиентов (mtproto-proxy -H; по умолчанию 443)
 #   --mtproxy-secret HEX  опционально: 32 hex или dd+32 hex; неверный — случайный + предупреждение в stderr
 #   --export              после result вывести export VPCONFIGURE_MTPROXY_*
 #   --persist [FILE]      записать переменные в /root/.vpconnect-configure.env (или FILE)
@@ -38,6 +41,8 @@ source "${_VPCONF_SCRIPT_DIR}/lib/vpconfigure_firewall.inc.sh"
 
 MTP_ROOT='/opt/MTProxy'
 DEFAULT_MTPROXY_PORT=443
+# Внутренний порт mtproto-proxy (-p); публичный порт задаётся -H (= opt_port / VPCONFIGURE_MTPROXY_PORT).
+MTPROXY_INTERNAL_PORT=8888
 DEFAULT_PERSIST_FILE='/root/.vpconnect-configure.env'
 SYSTEMD_NAME='mtproxy'
 WG_PRIV_DEFAULT='/etc/wireguard/privatekey'
@@ -75,7 +80,7 @@ usage() {
 Установка MTProxy (ветка debian). Нужны VPCONFIGURE_DOMAIN; пути WG из export, из
 ${DEFAULT_PERSIST_FILE} или умолчания ${WG_PRIV_DEFAULT} и ${WG_CLIENT_DIR_DEFAULT} (каталоги/ключ создаются при необходимости).
 
-  --mtproxy-port N      Порт TCP (по умолчанию ${DEFAULT_MTPROXY_PORT})
+  --mtproxy-port N      Публичный TCP-порт для клиентов (-H mtproto-proxy; по умолчанию ${DEFAULT_MTPROXY_PORT})
   --mtproxy-secret HEX  Секрет: 32 шестнадцатеричных символа или dd<32 hex> (как в tg://proxy).
                         Неверное значение — случайный секрет и предупреждение в stderr.
 
@@ -371,7 +376,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=${BIN_DIR}
-ExecStart=${BIN_DIR}/mtproto-proxy -u nobody -p ${opt_port} -H 8888 -S ${SECRET} --aes-pwd ${BIN_DIR}/proxy-secret ${BIN_DIR}/proxy-multi.conf
+ExecStart=${BIN_DIR}/mtproto-proxy -u nobody -p ${MTPROXY_INTERNAL_PORT} -H ${opt_port} -S ${SECRET} --aes-pwd ${BIN_DIR}/proxy-secret ${BIN_DIR}/proxy-multi.conf
 Restart=on-failure
 
 [Install]

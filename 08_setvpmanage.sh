@@ -9,7 +9,7 @@
 # Экспортируются пути к артефактам MTProxy (как в 07): VPCONFIGURE_MTPROXY_SECRET_PATH,
 # VPCONFIGURE_MTPROXY_LINK_PATH (файлы создаёт 07_setmtproxy.sh, здесь только пути для среды и приложения).
 #
-# CLI: --http-port (по умолчанию 80), --vpm-password (необязательно; иначе 30 символов A-Za-z0-9),
+# CLI: --http-port (по умолчанию 80), --vpm-password (необязательно; иначе 10 символов A–Za–z0–9),
 #      --export, --persist [FILE]
 #
 # Результат: result:success; …; password:<значение> (если пароль сгенерирован или передан).
@@ -70,7 +70,7 @@ usage() {
 Установка VPManage (ветка debian). Нужен VPCONFIGURE_DOMAIN; пути из env или ${DEFAULT_PERSIST_FILE}.
 
   --http-port N         HTTP-порт gunicorn (по умолчанию ${DEFAULT_HTTP_PORT})
-  --vpm-password PASS   Пароль админки (иначе сгенерируется 30 символов A-Za-z0-9)
+  --vpm-password PASS   Пароль админки (иначе сгенерируется 10 символов A–Za–z0–9)
 
   --export              После result — export VPCONFIGURE_VPM_* и связанных переменных
   --persist [FILE]      Записать переменные в env-файл (${DEFAULT_PERSIST_FILE} по умолчанию)
@@ -111,7 +111,7 @@ require_root() {
 # и set -e обрывает скрипт без die(). Подпроцесс отключает pipefail только для этой строки.
 gen_vpm_password() (
   set +o pipefail 2>/dev/null || true
-  LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 30
+  LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 10
 )
 
 # 32 символа: строчные латинские буквы и дефис (для FLASK_SECRET_KEY при генерации).
@@ -364,8 +364,8 @@ run_debian() {
   fi
   if [[ -z "${app_pw:-}" ]]; then
     app_pw="$(gen_vpm_password)"
-    [[ ${#app_pw} -eq 30 ]] || die "Не удалось сгенерировать пароль"
-    printf '%s\n' "Сгенерирован пароль админки (30 символов)." >&2
+    [[ ${#app_pw} -eq 10 ]] || die "Не удалось сгенерировать пароль"
+    printf '%s\n' "Сгенерирован пароль админки (10 символов A–Za–z0–9)." >&2
   elif [[ -z "$opt_pw" ]]; then
     printf '%s\n' "Сохранён пароль админки из существующего settings.env (повторный запуск)." >&2
   fi
