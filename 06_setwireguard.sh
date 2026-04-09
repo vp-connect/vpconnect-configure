@@ -382,9 +382,27 @@ EOF
   umask 022
   chmod 600 -- "$WG_CONF"
 
-  systemctl enable "wg-quick@${wg_iface}"
-  systemctl restart "wg-quick@${wg_iface}" 2>/dev/null || systemctl start "wg-quick@${wg_iface}" 2>/dev/null \
-    || die "Не удалось запустить wg-quick@${wg_iface}"
+  local wg_unit="wg-quick@${wg_iface}"
+  systemctl enable "$wg_unit" >/dev/null 2>&1 || true
+
+  # systemctl restart/start может вернуть ошибку, но причина важна (wg-quick, iptables, sysctl, конфиг).
+  # Не прячем stderr: сохраняем и печатаем диагностику перед die().
+  local wg_err=''
+  if ! wg_err=$(systemctl restart "$wg_unit" 2>&1); then
+    if ! wg_err=$(systemctl start "$wg_unit" 2>&1); then
+      printf '%s\n' "Ошибка! Не удалось запустить ${wg_unit}" >&2
+      printf '%s\n' "systemctl: ${wg_err}" >&2
+      systemctl status "$wg_unit" --no-pager -l >&2 || true
+      journalctl -u "$wg_unit" -n 80 --no-pager >&2 || true
+      die "Не удалось запустить ${wg_unit}"
+    fi
+  fi
+  if ! systemctl is-active --quiet "$wg_unit" 2>/dev/null; then
+    printf '%s\n' "Ошибка! ${wg_unit} не active после запуска." >&2
+    systemctl status "$wg_unit" --no-pager -l >&2 || true
+    journalctl -u "$wg_unit" -n 80 --no-pager >&2 || true
+    die "Не удалось запустить ${wg_unit}"
+  fi
 
   open_wg_port_in_firewall "$opt_port"
 
