@@ -24,7 +24,8 @@
 # Сначала stdout: result:…; message:… и поля; при --export — строки export …; пояснения — stderr.
 #
 #   --mtproxy-port N      Публичный TCP-порт для клиентов (mtproto-proxy -H; по умолчанию 443)
-#   --mtproxy-secret HEX  опционально: 32 hex или dd+32 hex; неверный — случайный + предупреждение в stderr
+#   --mtproxy-secret HEX  опционально: 32 hex или dd+32 hex; неверный — случайный + предупреждение в stderr.
+#                         Указание того же секрета при переустановке сохраняет tg://proxy для клиентов.
 #   --export              после result вывести export VPCONFIGURE_MTPROXY_*
 #   --persist [FILE]      записать переменные в /root/.vpconnect-configure.env (или FILE)
 #
@@ -83,6 +84,7 @@ ${DEFAULT_PERSIST_FILE} или умолчания ${WG_PRIV_DEFAULT} и ${WG_CLI
   --mtproxy-port N      Публичный TCP-порт для клиентов (-H mtproto-proxy; по умолчанию ${DEFAULT_MTPROXY_PORT})
   --mtproxy-secret HEX  Секрет: 32 шестнадцатеричных символа или dd<32 hex> (как в tg://proxy).
                         Неверное значение — случайный секрет и предупреждение в stderr.
+                        Для переустановки MTProxy без смены ссылки у клиентов укажите прежний секрет.
 
   --export              Строки export VPCONFIGURE_MTPROXY_* после result
   --persist [FILE]      Сохранить переменные в env-файл (${DEFAULT_PERSIST_FILE} по умолчанию)

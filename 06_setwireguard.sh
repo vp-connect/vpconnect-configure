@@ -29,6 +29,8 @@
 #   --wg-wan-interface NAME      внешний интерфейс для MASQUERADE (env: VPCONFIGURE_WG_WAN_IFACE); иначе авто
 #   --wg-client-cert-path PATH   (по умолчанию /usr/wireguard/client_cert)
 #   --wg-client-config-path PATH (по умолчанию /usr/wireguard/client_config)
+#   --wg-server-private-key-file PATH  приватный ключ сервера (одна строка, вывод wg genkey) на сервере;
+#                                      переустановка WG с тем же ключом — клиенты продолжают подключаться
 #   --export                     после result печатать export VPCONFIGURE_WG_* (для eval)
 #   --persist [FILE]             хуки ~/.bashrc и /etc/profile.d для загрузки FILE при входе
 #
@@ -98,6 +100,9 @@ usage() {
 
   --wg-client-config-path PATH   Каталог для будущих клиентских конфигов (только переменная окружения)
                                  (по умолчанию ${DEFAULT_CONF_DIR})
+
+  --wg-server-private-key-file PATH  Файл на сервере с приватным ключом WG (одна строка). Иначе — существующий
+                                     ${WG_PRIV} или новый wg genkey.
 
   --export                       После строки result вывести export VPCONFIGURE_WG_*
   --persist [FILE]             Сохранить переменные в env-файл (${DEFAULT_PERSIST_FILE} по умолчанию)
@@ -257,6 +262,7 @@ run_debian() {
   local opt_wan_iface=''
   local opt_cert=$DEFAULT_CERT
   local opt_confdir=$DEFAULT_CONF_DIR
+  local opt_server_priv_file=''
   local mode_export=0
   local persist=0
   local persist_file=$DEFAULT_PERSIST_FILE
@@ -281,6 +287,11 @@ run_debian() {
       --wg-client-config-path)
         [[ $# -ge 2 ]] || die "После --wg-client-config-path нужен путь"
         opt_confdir=$2
+        shift 2
+        ;;
+      --wg-server-private-key-file)
+        [[ $# -ge 2 ]] || die "После --wg-server-private-key-file нужен путь к файлу на сервере"
+        opt_server_priv_file=$2
         shift 2
         ;;
       --export)
@@ -342,7 +353,22 @@ run_debian() {
 
   local pub_path="${opt_cert}/${SERVER_PUB_BASENAME}"
   local priv_contents
-  if [[ -f "$WG_PRIV" && -s "$WG_PRIV" ]]; then
+  if [[ -n "$opt_server_priv_file" ]]; then
+    opt_server_priv_file="$(expand_tilde "$opt_server_priv_file")"
+    [[ -f "$opt_server_priv_file" && -s "$opt_server_priv_file" ]] \
+      || die "Файл приватного ключа WG не найден или пуст: ${opt_server_priv_file}"
+    priv_contents=$(tr -d '\r\n' <"$opt_server_priv_file" | head -n1 | tr -d ' \t')
+    [[ -n "$priv_contents" ]] || die "Пустой приватный ключ в ${opt_server_priv_file}"
+    umask 077
+    printf '%s\n' "$priv_contents" >"$WG_PRIV"
+    umask 022
+    chmod 600 -- "$WG_PRIV"
+    if ! printf '%s\n' "$priv_contents" | wg pubkey >"$pub_path" 2>/dev/null; then
+      die "Некорректный приватный ключ WireGuard (ожидается одна строка в формате wg genkey)"
+    fi
+    chmod 644 -- "$pub_path"
+    printf '%s\n' "Использован приватный ключ сервера из ${opt_server_priv_file} (сохранение доступа клиентов)." >&2
+  elif [[ -f "$WG_PRIV" && -s "$WG_PRIV" ]]; then
     priv_contents=$(cat -- "$WG_PRIV")
     printf '%s\n' "Сохранён существующий приватный ключ ${WG_PRIV} (повторный запуск 06)." >&2
     umask 077

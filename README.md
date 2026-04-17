@@ -100,8 +100,8 @@
 | `03_getconfigure.sh` | Клон/обновление репозитория |
 | `04_setsystemaccess.sh` | Пароль root, SSH‑порт, ключ (опционально **`--enable-firewall`** для управления `ufw`) |
 | `05_setdomain.sh` | Hostname / домен |
-| `06_setwireguard.sh` | WireGuard |
-| `07_setmtproxy.sh` | MTProxy (**`--mtproxy-port`**, опционально **`--mtproxy-secret`**, **`--export`**, **`--persist`**) |
+| `06_setwireguard.sh` | WireGuard (**`--wg-port`**, пути клиентских каталогов, опционально **`--wg-server-private-key-file`** — тот же приватный ключ при переустановке) |
+| `07_setmtproxy.sh` | MTProxy (**`--mtproxy-port`**, опционально **`--mtproxy-secret`** — сохранить секрет для клиентов, **`--export`**, **`--persist`**) |
 | `08_setvpmanage.sh` | VPManage |
 
 ## Порядок запуска (пример)
