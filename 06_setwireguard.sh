@@ -14,6 +14,7 @@
 #
 # До настройки выставляются переменные окружения (для последующих скриптов и вызова из vpconnect_install):
 #   VPCONFIGURE_WG_PORT
+#   VPCONFIGURE_WIREGUARD_NETWORK_CIDR (подсеть A.B.C.0/24; см. --wg-address)
 #   VPCONFIGURE_WG_CLIENT_CERT_PATH
 #   VPCONFIGURE_WG_CLIENT_CONFIG_PATH
 #   VPCONFIGURE_WG_SERVER_PUBLIC_KEY_PATH — файл с публичным ключом сервера в каталоге сертификатов
@@ -26,6 +27,7 @@
 #
 # Опционально:
 #   --wg-port N                  UDP-порт (по умолчанию 51820)
+#   --wg-address A.B.C.1/24      адрес сервера в туннеле (по умолчанию 10.8.0.1/24)
 #   --wg-wan-interface NAME      внешний интерфейс для MASQUERADE (env: VPCONFIGURE_WG_WAN_IFACE); иначе авто
 #   --wg-client-cert-path PATH   (по умолчанию /usr/wireguard/client_cert)
 #   --wg-client-config-path PATH (по умолчанию /usr/wireguard/client_config)
@@ -55,6 +57,7 @@ WG_PRIV="${WG_ETC}/privatekey"
 SERVER_PUB_BASENAME='wg_server_public.key'
 
 DEFAULT_WG_PORT=51820
+DEFAULT_WG_ADDRESS='10.8.0.1/24'
 DEFAULT_CERT='/usr/wireguard/client_cert'
 DEFAULT_CONF_DIR='/usr/wireguard/client_config'
 DEFAULT_PERSIST_FILE='/root/.vpconnect-configure.env'
@@ -91,6 +94,9 @@ usage() {
 Установка WireGuard (сервер, ветка debian). Клиенты не создаются.
 
   --wg-port N                    UDP-порт прослушивания (по умолчанию ${DEFAULT_WG_PORT})
+
+  --wg-address A.B.C.1/24        Адрес сервера в туннеле ([Interface] Address), всегда /24 и …1 (как из установщика).
+                                 По умолчанию ${DEFAULT_WG_ADDRESS}. В env пишется VPCONFIGURE_WIREGUARD_NETWORK_CIDR (A.B.C.0/24).
 
   --wg-wan-interface NAME        Исходящий интерфейс для NAT (MASQUERADE). Без опции — определяется при подъёме
                                  туннеля через default route (env: VPCONFIGURE_WG_WAN_IFACE)
@@ -227,7 +233,7 @@ merge_wg_into_env_file() {
   tmp="$(mktemp)"
   umask 077
   if [[ -f "$f" ]]; then
-    grep -vE '^export[[:space:]]+VPCONFIGURE_(WG_(PORT|CLIENT_CERT_PATH|CLIENT_CONFIG_PATH|SERVER_PUBLIC_KEY_PATH|PRIVATE_KEY_PATH|WAN_IFACE)|WIREGUARD_INTERFACE_NAME)=|^# VPCONFIGURE_WG \(06_setwireguard' "$f" >"$tmp" || true
+    grep -vE '^export[[:space:]]+VPCONFIGURE_(WG_(PORT|CLIENT_CERT_PATH|CLIENT_CONFIG_PATH|SERVER_PUBLIC_KEY_PATH|PRIVATE_KEY_PATH|WAN_IFACE)|WIREGUARD_(INTERFACE_NAME|NETWORK_CIDR))=|^# VPCONFIGURE_WG \(06_setwireguard' "$f" >"$tmp" || true
   else
     : >"$tmp"
   fi
@@ -259,6 +265,7 @@ emit_exports() {
 
 run_debian() {
   local opt_port=''
+  local opt_wg_address=''
   local opt_wan_iface=''
   local opt_cert=$DEFAULT_CERT
   local opt_confdir=$DEFAULT_CONF_DIR
@@ -272,6 +279,11 @@ run_debian() {
       --wg-port)
         [[ $# -ge 2 ]] || die "После --wg-port нужен номер UDP-порта"
         opt_port=$2
+        shift 2
+        ;;
+      --wg-address)
+        [[ $# -ge 2 ]] || die "После --wg-address нужен адрес вида A.B.C.1/24"
+        opt_wg_address=$2
         shift 2
         ;;
       --wg-wan-interface)
@@ -321,6 +333,14 @@ run_debian() {
   if ! [[ "$opt_port" =~ ^[0-9]+$ ]] || [[ "$opt_port" -lt 1 || "$opt_port" -gt 65535 ]]; then
     die "Некорректный UDP-порт: ${opt_port} (нужно 1–65535)"
   fi
+
+  [[ -n "$opt_wg_address" ]] || opt_wg_address=$DEFAULT_WG_ADDRESS
+  if ! [[ "$opt_wg_address" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}\.1/24$ ]]; then
+    die "Некорректный --wg-address: ${opt_wg_address} (ожидается A.B.C.1/24)"
+  fi
+  local wg_net_cidr
+  wg_net_cidr=$(python3 -c 'import ipaddress,sys; print(ipaddress.ip_interface(sys.argv[1]).network)' "$opt_wg_address") \
+    || die "Не удалось вычислить сеть для ${opt_wg_address}"
 
   wan_iface="${opt_wan_iface:-${VPCONFIGURE_WG_WAN_IFACE:-}}"
   if [[ -n "$wan_iface" ]] && ! [[ "$wan_iface" =~ ^[a-zA-Z0-9._:@-]{1,32}$ ]]; then
@@ -389,7 +409,7 @@ run_debian() {
   if [[ -n "$wan_iface" ]]; then
     cat >"$WG_CONF" <<EOF
 [Interface]
-Address = 10.8.0.1/24
+Address = ${opt_wg_address}
 ListenPort = ${opt_port}
 PrivateKey = ${priv_contents}
 PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -A FORWARD -o %i -j ACCEPT; iptables -t nat -A POSTROUTING -o ${wan_iface} -j MASQUERADE
@@ -399,7 +419,7 @@ EOF
     # WAN при каждом up: default route (не хардкод eth0). \$(...) и \$5 — буквально в файле для wg-quick.
     cat >"$WG_CONF" <<EOF
 [Interface]
-Address = 10.8.0.1/24
+Address = ${opt_wg_address}
 ListenPort = ${opt_port}
 PrivateKey = ${priv_contents}
 PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -A FORWARD -o %i -j ACCEPT; iptables -t nat -A POSTROUTING -o \$(ip -4 route show default | awk '/default/{print \$5; exit}') -j MASQUERADE
@@ -475,6 +495,7 @@ EOF
     VPCONFIGURE_WG_SERVER_PUBLIC_KEY_PATH "$pub_path"
     VPCONFIGURE_WG_PRIVATE_KEY_PATH "$WG_PRIV"
     VPCONFIGURE_WIREGUARD_INTERFACE_NAME "$wg_iface"
+    VPCONFIGURE_WIREGUARD_NETWORK_CIDR "$wg_net_cidr"
   )
   [[ -n "$wan_iface" ]] && merge_kv+=( VPCONFIGURE_WG_WAN_IFACE "$wan_iface" )
   merge_wg_into_env_file "$persist_file" "${merge_kv[@]}"
