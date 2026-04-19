@@ -1,62 +1,55 @@
 # vpconnect-configure
 
-Скрипты подготовки сервера (WireGuard, MTProxy, VPManage).
+Скрипты подготовки сервера для установки и обслуживания VPConnect.
+
+## Профиль ветки
+
+Ветка `main` содержит общий формат документации и полное описание поддерживаемых платформ без привязки к конкретной реализации ОС.
 
 ## Поддерживаемые ОС
 
-- **FreeBSD** 13, 14  
-- **Ubuntu** 22.04, 24.04, 26.04  
-- **Debian** 12, 13  
-- Производные Debian/Ubuntu: Linux Mint, Pop!_OS, Kali, Raspberry Pi OS, Elementary, Zorin, Devuan (по `ID` / `ID_LIKE`)  
-- **AlmaLinux** 9.x, 10.x  
-- **Rocky Linux** 8.x, 9.x  
-- **VzLinux / Virtuozzo** 8.x  
-- **Oracle Linux**, **EuroLinux**, **CloudLinux** 8–10  
-- **RHEL** 8–10  
-- **Fedora** 39+  
-- **Amazon Linux** 2023+ (не AL2)  
+- **FreeBSD**: 13, 14
+- **Debian family**: Debian 12-13, Ubuntu 22.04/24.04/26.04, Linux Mint, Pop!_OS, Kali, Raspberry Pi OS, Elementary, Zorin, Devuan
+- **RHEL family**: AlmaLinux 9-10, Rocky Linux 8-9, Oracle Linux 8-10, EuroLinux 8-10, CloudLinux 8-10, RHEL 8-10, Fedora 39+, Amazon Linux 2023+, VzLinux/Virtuozzo 8
 
-Не поддерживаются: CentOS Linux, Scientific Linux, Amazon Linux 2, FreeBSD 12.
+Неподдерживаемые примеры: CentOS Linux, Scientific Linux, Amazon Linux 2, FreeBSD 12.
 
-## Ветка `VPCONFIGURE_GIT_BRANCH`
+## Модель веток и запуск
 
-Скрипт `01_getosversion.sh` задаёт одно из трёх **семейств** (имя ветки в Git при необходимости совпадает с ним):
+- `00-03` — универсальные, мульти-OS.
+- `04-08`, `lib/`, `wg/` — OS-зависимые и используются в профильных ветках.
+- `01_getosversion.sh` задает `VPCONFIGURE_GIT_BRANCH` (`freebsd|debian|centos`) для выбора целевого профиля.
 
-| Значение   | ОС |
-|------------|----|
-| `freebsd`  | FreeBSD |
-| `debian`   | Debian, Ubuntu и совместимые (`apt`) |
-| `centos`   | RHEL‑семейство: Alma, Rocky, Oracle, Fedora, Amazon Linux 2023+ и т.д. (`dnf`/`yum`) |
+## Контракт результата
 
-Скрипты **`02`–`08`** запускаются **после** `01` и опираются на `VPCONFIGURE_GIT_BRANCH`. **`00`** и **`01`** переменную не требуют.
-
-## Строка результата (для автоматизации)
-
-Первая строка **stdout** всегда начинается с `result:success`, `result:warning` или `result:error`, далее `; message:текст` и при необходимости `; ключ:значение` (например `branch:debian`). В `message` символ `;` не использовать. Пояснения и лог — в **stderr**
+Первая строка stdout:
 
 `result:success|warning|error;message:текст;[ключ:значение;]`
+
+- Логи и пояснения печатаются в stderr.
+- `message` не должен содержать `;`.
 
 ## Скрипты
 
 | Файл | Назначение |
 |------|------------|
-| `00_bashinstall.sh` | Установить `bash`, если нет (`sh ./00_installbash.sh`) |
-| `01_getosversion.sh` | Семейство ОС → `VPCONFIGURE_GIT_BRANCH`, опции `--export`, `--persist` |
-| `02_gitinstall.sh` | Установка `git` по семейству |
-| `03_getconfigure.sh` | Клон/обновление репозитория |
-| `04_setsystemaccess.sh` | Пароль root, SSH‑порт, ключ |
-| `05_setdomain.sh` | Hostname / домен |
-| `06_setwireguard.sh` | WireGuard |
-| `07_setmtproxy.sh` | MTProxy |
-| `08_setvpmanage.sh` | VPManage |
+| `00_bashinstall.sh` | Проверка/установка оболочки `bash` |
+| `01_getosversion.sh` | Определение семейства ОС и `VPCONFIGURE_GIT_BRANCH` |
+| `02_gitinstall.sh` | Установка `git` средствами текущей ОС |
+| `03_getconfigure.sh` | Клон/обновление репозитория конфигурации |
+| `04_setsystemaccess.sh` | Базовый системный доступ (root/SSH/ключ/опц. firewall) |
+| `05_setdomain.sh` | Установка `VPCONFIGURE_DOMAIN` |
+| `06_setwireguard.sh` | Установка и базовая настройка WireGuard |
+| `07_setmtproxy.sh` | Установка и настройка MTProxy |
+| `08_setvpmanage.sh` | Установка и настройка VPManage |
 
-## Порядок запуска (пример)
+## Порядок запуска
 
 ```sh
 sh ./00_bashinstall.sh
 eval "$(bash ./01_getosversion.sh --export | sed -n '2p')"
-bash ./01_getosversion.sh --persist   # опционально
+bash ./01_getosversion.sh --persist   # optional
 bash ./02_gitinstall.sh
 bash ./03_getconfigure.sh
-# далее 04–08 по необходимости настройки сервера
+# затем 04-08 по задачам окружения
 ```
