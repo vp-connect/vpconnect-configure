@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 07_setmtproxy
 #
-# Установка Telegram MTProxy (linux-ветки debian/centos): сборка в /opt/MTProxy, systemd mtproxy.service,
+# Установка Telegram MTProxy (только centos-ветка): сборка в /opt/MTProxy, systemd mtproxy.service,
 # секрет и ссылка tg:// в каталогах рядом с артефактами WireGuard.
 #
 # Переменные окружения (export, 05_setdomain.sh и 06_setwireguard.sh) или из файла
@@ -78,7 +78,7 @@ die() {
 usage() {
   vp_result_line success "Справка выведена в stderr"
   cat >&2 <<EOF
-Установка MTProxy (ветки debian/centos). Нужны VPCONFIGURE_DOMAIN; пути WG из export, из
+Установка MTProxy (только centos-ветка). Нужны VPCONFIGURE_DOMAIN; пути WG из export, из
 ${DEFAULT_PERSIST_FILE} или умолчания ${WG_PRIV_DEFAULT} и ${WG_CLIENT_DIR_DEFAULT} (каталоги/ключ создаются при необходимости).
 
   --mtproxy-port N      Публичный TCP-порт для клиентов (-H mtproto-proxy; по умолчанию ${DEFAULT_MTPROXY_PORT})
@@ -133,28 +133,14 @@ rhel_pkg_manager() {
 }
 
 install_mtproxy_packages() {
-  local os_family=$1
-  case "$os_family" in
-    debian)
-      export DEBIAN_FRONTEND=noninteractive
-      apt-get update -qq
-      apt-get install -y -qq curl build-essential libssl-dev zlib1g-dev xxd wireguard-tools \
-        || die "Не удалось установить зависимости MTProxy через apt"
-      ;;
-    centos)
-      local pm
-      pm=$(rhel_pkg_manager) || die "Не найден dnf/yum для установки зависимостей MTProxy"
-      "$pm" -y install curl gcc make openssl-devel zlib-devel wireguard-tools >/dev/null 2>&1 \
-        || die "Не удалось установить базовые зависимости MTProxy через ${pm}"
-      if ! command -v xxd >/dev/null 2>&1; then
-        "$pm" -y install vim-common >/dev/null 2>&1 || true
-      fi
-      command -v xxd >/dev/null 2>&1 || die "Команда xxd недоступна (нужен пакет vim-common)"
-      ;;
-    *)
-      die "Неизвестное linux-семейство: ${os_family}"
-      ;;
-  esac
+  local pm
+  pm=$(rhel_pkg_manager) || die "Не найден dnf/yum для установки зависимостей MTProxy"
+  "$pm" -y install curl gcc make openssl-devel zlib-devel wireguard-tools >/dev/null 2>&1 \
+    || die "Не удалось установить базовые зависимости MTProxy через ${pm}"
+  if ! command -v xxd >/dev/null 2>&1; then
+    "$pm" -y install vim-common >/dev/null 2>&1 || true
+  fi
+  command -v xxd >/dev/null 2>&1 || die "Команда xxd недоступна (нужен пакет vim-common)"
 }
 
 # Каталог для privatekey (700), при отсутствии файла — wg genkey; каталог client_config (755).
@@ -178,33 +164,16 @@ ensure_wg_private_and_client_paths() {
 open_mtproxy_tcp_in_firewall() {
   local port=$1
 
-  if command -v ufw >/dev/null 2>&1; then
-    if vp_ufw_has_port "$port" tcp; then
-      printf '%s\n' "ufw: правило TCP ${port} уже есть — повторно не добавляю." >&2
-    else
-    printf '%s\n' "Обнаружен ufw: добавляю TCP ${port} (vpconnect-mtproxy)…" >&2
-    local ufw_out
-    if ufw_out=$(ufw allow "${port}/tcp" comment 'vpconnect-mtproxy' 2>&1); then
-      printf '%s\n' "$ufw_out" >&2
-      if ufw status 2>/dev/null | grep -qiE '^Status:[[:space:]]+active'; then
-        ufw reload >/dev/null 2>&1 || printf '%s\n' "ufw: reload не выполнен." >&2
-      fi
+  if command -v firewall-cmd >/dev/null 2>&1; then
+    if vp_firewalld_add_port "$port" tcp; then
+      printf '%s\n' "firewalld: ${port}/tcp добавлен (если отсутствовал)." >&2
       return 0
     fi
-    printf '%s\n' "ufw: не удалось добавить порт: ${ufw_out}" >&2
-    fi
-  fi
-
-  if command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld 2>/dev/null; then
-    printf '%s\n' "firewalld: добавляю ${port}/tcp…" >&2
-    firewall-cmd --permanent --add-port="${port}/tcp" >/dev/null 2>&1 \
-      && firewall-cmd --add-port="${port}/tcp" >/dev/null 2>&1 \
-      && firewall-cmd --reload >/dev/null 2>&1 \
-      && printf '%s\n' "firewalld: ${port}/tcp добавлен." >&2
+    printf '%s\n' "firewalld недоступен или не активен — откройте TCP ${port} после запуска firewalld." >&2
     return 0
   fi
 
-  printf '%s\n' "Откройте TCP ${port} вручную, если используется другой файрвол." >&2
+  printf '%s\n' "firewall-cmd не найден: откройте TCP ${port} вручную или установите firewalld." >&2
 }
 
 merge_mtproxy_into_env_file() {
@@ -273,9 +242,7 @@ _write_mtproxy_secret_file() {
   printf '%s\n' "$msg" >&2
 }
 
-run_linux() {
-  local os_family=$1
-  shift
+run_centos() {
   local opt_port=''
   local opt_secret=''
   local mode_export=0
@@ -357,7 +324,7 @@ run_linux() {
 
   require_root
 
-  install_mtproxy_packages "$os_family"
+  install_mtproxy_packages
 
   command -v git >/dev/null 2>&1 || die "git не найден в PATH, сначала 02_gitinstall.sh"
 
@@ -463,27 +430,14 @@ main() {
   local b
   b=$(printf '%s' "$VPCONFIGURE_GIT_BRANCH" | tr '[:upper:]' '[:lower:]')
   case "$b" in
-    freebsd|debian|centos) ;;
-    *) die "VPCONFIGURE_GIT_BRANCH=${b} недопустимо" ;;
-  esac
-
-  case "$b" in
-    debian)
-      run_linux debian "$@"
-      ;;
     centos)
-      run_linux centos "$@"
+      run_centos "$@"
       ;;
-    freebsd)
-      if [[ "${1:-}" == '-h' || "${1:-}" == '--help' ]]; then
-        usage
-        exit 0
-      fi
-      printf '%s\n' "Ветка ${b}: 07_setmtproxy.sh не реализован." >&2
-      vp_result_line warning "ветка ${b}, скрипт не реализован" \
-        "mtproxy_port:unset" \
-        "mtproxy_secret_path:unset" \
-        "mtproxy_link_path:unset"
+    freebsd|debian)
+      die "Этот скрипт в ветке centos поддерживает только VPCONFIGURE_GIT_BRANCH=centos (текущее: ${b})"
+      ;;
+    *)
+      die "VPCONFIGURE_GIT_BRANCH=${b} недопустимо"
       ;;
   esac
 }

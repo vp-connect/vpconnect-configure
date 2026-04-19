@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 # 04_setsystemaccess
 #
-# Пароль root, порт SSH, публичный ключ для root (linux-ветки debian/centos).
+# Пароль root, порт SSH, публичный ключ для root (только centos-ветка).
 # Файрвол: управление выполняется ТОЛЬКО при флаге --enable-firewall.
-# При включённом флаге:
-#   - debian: ufw (установка через apt);
-#   - centos: firewalld (установка через dnf/yum, запуск и enable).
+# При включённом флаге: firewalld (установка через dnf/yum, запуск и enable).
 # При смене порта SSH: снять старые allow, добавить новый, reload (если активен).
 # Каждый этап выполняется только если передан соответствующий параметр CLI.
 # vpconnect_install может вызывать скрипт, подставляя только нужные флаги.
@@ -18,8 +16,7 @@
 #                              [--ssh-public-key LINE | --ssh-public-key-file PATH]
 #                              [--enable-firewall]
 #
-# Нужна переменная VPCONFIGURE_GIT_BRANCH из 01_getosversion.sh (freebsd, debian, centos).
-# Полная логика для linux-веток debian и centos; для freebsd — предупреждение без изменений системы.
+# Нужна переменная VPCONFIGURE_GIT_BRANCH=centos из 01_getosversion.sh.
 
 set -euo pipefail
 
@@ -54,7 +51,7 @@ die() {
 usage() {
   vp_result_line success "Справка выведена в stderr"
   cat >&2 <<EOF
-Настройка доступа: пароль root, порт sshd, ключ в authorized_keys (ветки debian/centos).
+Настройка доступа: пароль root, порт sshd, ключ в authorized_keys (только centos-ветка).
 
   --new-root-password PASS       Новый пароль пользователя root (не сочетать с -file)
   --new-root-password-file PATH  Прочитать пароль из первой строки файла
@@ -64,43 +61,18 @@ usage() {
   --ssh-public-key LINE          Одна строка OpenSSH public key (не сочетать с -file)
   --ssh-public-key-file PATH     Взять ключ из первой строки файла
 
-  --enable-firewall              Включить firewall и управлять правилами
-                                 (debian: ufw, centos: firewalld)
+  --enable-firewall              Включить firewalld и управлять правилами
 
   -h, --help                     Эта справка
 
 Пример (vpconnect_install подставляет только нужные флаги):
-  export VPCONFIGURE_GIT_BRANCH=debian
+  export VPCONFIGURE_GIT_BRANCH=centos
   bash ./04_setsystemaccess.sh --new-ssh-port 2222 --ssh-public-key-file /tmp/id.pub
 EOF
 }
 
 require_root() {
   [[ "${EUID:-0}" -eq 0 ]] || die "Запускайте от root (нужны chpasswd, /etc/ssh, /root/.ssh)"
-}
-
-ensure_ufw_installed() {
-  if command -v ufw >/dev/null 2>&1; then
-    return 0
-  fi
-  printf '%s\n' "ufw не найден, устанавливаю (apt)…" >&2
-  export DEBIAN_FRONTEND=noninteractive
-  apt-get update -qq || die "apt-get update не выполнен (нужен для ufw)"
-  apt-get install -y -qq ufw || die "Не удалось установить ufw"
-  command -v ufw >/dev/null 2>&1 || die "После установки ufw недоступен в PATH"
-
-  printf '%s\n' "ufw только что установлен: добавляю правила для SSH и включаю файрвол…" >&2
-  local p n=0
-  while IFS= read -r p; do
-    [[ -z "$p" ]] && continue
-    ufw allow "${p}/tcp" comment 'vpconnect-ssh-before-enable' >/dev/null 2>&1 || true
-    n=$((n + 1))
-  done < <(sshd -T 2>/dev/null | awk '/^port / { print $2 }' | sort -u)
-  if [[ "$n" -eq 0 ]]; then
-    ufw allow 22/tcp comment 'vpconnect-ssh-fallback' >/dev/null 2>&1 || true
-  fi
-  ufw --force enable || die "Не удалось включить ufw (ufw --force enable)"
-  printf '%s\n' "ufw включён (после установки)." >&2
 }
 
 rhel_pkg_manager() {
@@ -127,39 +99,6 @@ ensure_firewalld_installed() {
   command -v firewall-cmd >/dev/null 2>&1 || die "После установки firewalld недоступен firewall-cmd"
   systemctl enable --now firewalld >/dev/null 2>&1 || die "Не удалось включить/запустить firewalld"
   printf '%s\n' "firewalld установлен и запущен." >&2
-}
-
-# Удаляет все правила ufw вида allow PORT/tcp (несколько итераций).
-remove_ufw_allow_tcp_port() {
-  local port=$1
-  local i
-  for ((i = 0; i < 32; i++)); do
-    ufw status numbered 2>/dev/null | grep -qE "[[:space:]]${port}/tcp[[:space:]]" || return 0
-    ufw delete allow "${port}/tcp" >/dev/null 2>&1 || return 0
-  done
-}
-
-# После смены порта sshd: снять старые TCP-порты, добавить новый, применить (reload).
-update_ufw_for_new_ssh_port() {
-  local new_port=$1
-  shift
-  command -v ufw >/dev/null 2>&1 || return 0
-  local oldp
-  for oldp in "$@"; do
-    [[ -z "$oldp" ]] && continue
-    [[ "$oldp" == "$new_port" ]] && continue
-    printf '%s\n' "ufw: удаляю правила TCP ${oldp} (прежний SSH)…" >&2
-    remove_ufw_allow_tcp_port "$oldp"
-  done
-  printf '%s\n' "ufw: добавляю TCP ${new_port} (SSH)…" >&2
-  ufw allow "${new_port}/tcp" comment 'vpconnect-ssh' >/dev/null 2>&1 \
-    || printf '%s\n' "Предупреждение: ufw allow ${new_port}/tcp не выполнен." >&2
-  if ufw status 2>/dev/null | grep -qiE '^Status:[[:space:]]+active'; then
-    ufw reload >/dev/null 2>&1 || printf '%s\n' "Предупреждение: ufw reload не выполнен." >&2
-    printf '%s\n' "ufw: правила применены (reload)." >&2
-  else
-    printf '%s\n' "ufw: не активен — правило записано, включите ufw при необходимости." >&2
-  fi
 }
 
 firewalld_remove_tcp_port() {
@@ -195,21 +134,10 @@ update_firewalld_for_new_ssh_port() {
 
 enable_firewall_if_requested() {
   local enabled=${1:-0}
-  local os_family=${2:-debian}
   if [[ "$enabled" -ne 1 ]]; then
     return 0
   fi
-  case "$os_family" in
-    debian)
-      ensure_ufw_installed
-      ;;
-    centos)
-      ensure_firewalld_installed
-      ;;
-    *)
-      die "Неизвестное linux-семейство для firewall: ${os_family}"
-      ;;
-  esac
+  ensure_firewalld_installed
 }
 
 collect_sshd_ports_or_fail() {
@@ -253,9 +181,7 @@ step_root_password=skipped
 step_ssh_port=skipped
 step_ssh_public_key=skipped
 
-run_linux() {
-  local os_family=$1
-  shift
+run_centos() {
   local opt_new_pw=''
   local opt_new_pw_file=''
   local opt_ssh_port=''
@@ -350,7 +276,7 @@ run_linux() {
   fi
 
   require_root
-  enable_firewall_if_requested "$opt_enable_firewall" "$os_family"
+  enable_firewall_if_requested "$opt_enable_firewall"
 
   if [[ -n "$new_pw" ]]; then
     local ch_err
@@ -384,14 +310,7 @@ run_linux() {
       step_ssh_port=done
       printf '%s\n' "Записан ${SSH_DROP_IN}, служба ssh перезапущена." >&2
       if [[ "$opt_enable_firewall" -eq 1 ]]; then
-        case "$os_family" in
-          debian)
-            update_ufw_for_new_ssh_port "$opt_ssh_port" "${old_ssh_ports[@]}"
-            ;;
-          centos)
-            update_firewalld_for_new_ssh_port "$opt_ssh_port" "${old_ssh_ports[@]}"
-            ;;
-        esac
+        update_firewalld_for_new_ssh_port "$opt_ssh_port" "${old_ssh_ports[@]}"
       fi
     fi
   fi
@@ -423,27 +342,14 @@ main() {
   local b
   b=$(printf '%s' "$VPCONFIGURE_GIT_BRANCH" | tr '[:upper:]' '[:lower:]')
   case "$b" in
-    freebsd|debian|centos) ;;
-    *) die "VPCONFIGURE_GIT_BRANCH=${b} недопустимо" ;;
-  esac
-
-  case "$b" in
-    debian)
-      run_linux debian "$@"
-      ;;
     centos)
-      run_linux centos "$@"
+      run_centos "$@"
       ;;
-    freebsd)
-      if [[ "${1:-}" == '-h' || "${1:-}" == '--help' ]]; then
-        usage
-        exit 0
-      fi
-      printf '%s\n' "Ветка ${b}: 04_setsystemaccess.sh пока не реализован, система не изменена." >&2
-      vp_result_line warning "ветка ${b}, скрипт не реализован" \
-        "step_root_password:skipped" \
-        "step_ssh_port:skipped" \
-        "step_ssh_public_key:skipped"
+    freebsd|debian)
+      die "Этот скрипт в ветке centos поддерживает только VPCONFIGURE_GIT_BRANCH=centos (текущее: ${b})"
+      ;;
+    *)
+      die "VPCONFIGURE_GIT_BRANCH=${b} недопустимо"
       ;;
   esac
 }

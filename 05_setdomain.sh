@@ -2,7 +2,7 @@
 # 05_setdomain
 #
 # Задаёт используемое имя/адрес сервера в VPCONFIGURE_DOMAIN (для последующих скриптов и установщика).
-# Linux/FreeBSD: домен из CLI, из REST по ключу, либо внешний IP.
+# CentOS-ветка: домен из CLI, из REST по ключу, либо внешний IP.
 #
 # Сначала stdout: строка result:…; message:…; domain:… (при --export вторая строка — export …).
 #
@@ -61,7 +61,7 @@ die() {
 usage() {
   vp_result_line success "Справка выведена в stderr"
   cat >&2 <<EOF
-Установка VPCONFIGURE_DOMAIN (ветки freebsd/debian/centos: домен, сервис по ключу или внешний IP).
+Установка VPCONFIGURE_DOMAIN (только centos-ветка: домен, сервис по ключу или внешний IP).
 
   --domain STRING           Явное значение (FQDN или IP)
   --domain-client-key KEY   Запрос FQDN у REST (если --domain не задан); см. VPCONFIGURE_DOMAIN_SERVICE_URL
@@ -72,7 +72,7 @@ usage() {
   -h, --help
 
 Пример:
-  export VPCONFIGURE_GIT_BRANCH=debian
+  export VPCONFIGURE_GIT_BRANCH=centos
   eval "\$(bash ./05_setdomain.sh --domain srv.example.com --export | sed -n '2p')"
   bash ./05_setdomain.sh --domain srv.example.com --persist
 EOF
@@ -282,13 +282,14 @@ main() {
   local b
   b=$(printf '%s' "$VPCONFIGURE_GIT_BRANCH" | tr '[:upper:]' '[:lower:]')
   case "$b" in
-    freebsd|debian|centos) ;;
-    *) die "VPCONFIGURE_GIT_BRANCH=${b} недопустимо" ;;
-  esac
-
-  case "$b" in
-    freebsd|debian|centos)
+    centos)
       run_domain_setup "$@"
+      ;;
+    freebsd|debian)
+      die "Этот скрипт в ветке centos поддерживает только VPCONFIGURE_GIT_BRANCH=centos (текущее: ${b})"
+      ;;
+    *)
+      die "VPCONFIGURE_GIT_BRANCH=${b} недопустимо"
       ;;
   esac
 }

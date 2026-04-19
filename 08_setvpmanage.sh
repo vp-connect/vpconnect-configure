@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 08_setvpmanage
 #
-# Установка VPManage (linux-ветки debian/centos): клон в /opt/VPManage, venv, settings.env, systemd (gunicorn + Flask).
+# Установка VPManage (только centos-ветка): клон в /opt/VPManage, venv, settings.env, systemd (gunicorn + Flask).
 # Пакет git не ставится здесь — только в 02_gitinstall.sh (цепочка 00–03 обязательна).
 # Репозиторий: https://github.com/vp-connect/vpconnect-manage.git
 #
@@ -67,7 +67,7 @@ die() {
 usage() {
   vp_result_line success "Справка выведена в stderr"
   cat >&2 <<EOF
-Установка VPManage (ветки debian/centos). Нужен VPCONFIGURE_DOMAIN; пути из env или ${DEFAULT_PERSIST_FILE}.
+Установка VPManage (только centos-ветка). Нужен VPCONFIGURE_DOMAIN; пути из env или ${DEFAULT_PERSIST_FILE}.
 
   --http-port N         HTTP-порт gunicorn (по умолчанию ${DEFAULT_HTTP_PORT})
   --vpm-password PASS   Пароль админки (иначе сгенерируется 10 символов A–Za–z0–9)
@@ -120,27 +120,11 @@ rhel_pkg_manager() {
 }
 
 install_vpmanage_python_stack() {
-  local os_family=$1
-  case "$os_family" in
-    debian)
-      export DEBIAN_FRONTEND=noninteractive
-      printf '%s\n' "VPManage: apt-get update (без вывода пакетов, может занять несколько минут)…" >&2
-      apt-get update -qq
-      printf '%s\n' "VPManage: установка python3, venv, pip…" >&2
-      apt-get install -y -qq python3 python3-venv python3-pip \
-        || die "Не удалось установить python3/venv/pip через apt"
-      ;;
-    centos)
-      local pm
-      pm=$(rhel_pkg_manager) || die "Не найден dnf/yum для установки python3"
-      printf '%s\n' "VPManage: установка python3 и pip через ${pm}…" >&2
-      "$pm" -y install python3 python3-pip >/dev/null 2>&1 \
-        || die "Не удалось установить python3/python3-pip через ${pm}"
-      ;;
-    *)
-      die "Неизвестное linux-семейство: ${os_family}"
-      ;;
-  esac
+  local pm
+  pm=$(rhel_pkg_manager) || die "Не найден dnf/yum для установки python3"
+  printf '%s\n' "VPManage: установка python3 и pip через ${pm}…" >&2
+  "$pm" -y install python3 python3-pip >/dev/null 2>&1 \
+    || die "Не удалось установить python3/python3-pip через ${pm}"
   command -v python3 >/dev/null 2>&1 || die "python3 недоступен после установки"
 }
 
@@ -163,32 +147,16 @@ gen_flask_secret_key() (
 open_vpm_http_in_firewall() {
   local port=$1
 
-  if command -v ufw >/dev/null 2>&1; then
-    if vp_ufw_has_port "$port" tcp; then
-      printf '%s\n' "ufw: правило TCP ${port} уже есть — повторно не добавляю." >&2
-    else
-    printf '%s\n' "ufw: добавляю TCP ${port} (vpconnect-vpmanage)…" >&2
-    local ufw_out
-    if ufw_out=$(ufw allow "${port}/tcp" comment 'vpconnect-vpmanage' 2>&1); then
-      printf '%s\n' "$ufw_out" >&2
-      if ufw status 2>/dev/null | grep -qiE '^Status:[[:space:]]+active'; then
-        ufw reload >/dev/null 2>&1 || true
-      fi
+  if command -v firewall-cmd >/dev/null 2>&1; then
+    if vp_firewalld_add_port "$port" tcp; then
+      printf '%s\n' "firewalld: TCP ${port} добавлен (если отсутствовал)." >&2
       return 0
     fi
-    printf '%s\n' "ufw: не удалось добавить порт: ${ufw_out}" >&2
-    fi
-  fi
-
-  if command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld 2>/dev/null; then
-    printf '%s\n' "firewalld: TCP ${port}…" >&2
-    firewall-cmd --permanent --add-port="${port}/tcp" >/dev/null 2>&1 \
-      && firewall-cmd --add-port="${port}/tcp" >/dev/null 2>&1 \
-      && firewall-cmd --reload >/dev/null 2>&1
+    printf '%s\n' "firewalld недоступен или не активен — откройте TCP ${port} после запуска firewalld." >&2
     return 0
   fi
 
-  printf '%s\n' "Откройте TCP ${port} вручную при необходимости." >&2
+  printf '%s\n' "firewall-cmd не найден: откройте TCP ${port} вручную или установите firewalld." >&2
 }
 
 merge_vpm_into_env_file() {
@@ -227,9 +195,7 @@ emit_vpm_exports() {
   printf 'export VPCONFIGURE_MTPROXY_LINK_PATH=%q\n' "$6"
 }
 
-run_linux() {
-  local os_family=$1
-  shift
+run_centos() {
   local opt_http=''
   local opt_pw=''
   local mode_export=0
@@ -359,7 +325,7 @@ run_linux() {
 
   install -d -m 755 -- "$wg_keys_dir" "$wg_client_conf_dir"
 
-  install_vpmanage_python_stack "$os_family"
+  install_vpmanage_python_stack
 
   command -v git >/dev/null 2>&1 || die "git не найден в PATH, сначала 02_gitinstall.sh"
 
@@ -569,26 +535,14 @@ main() {
   local b
   b=$(printf '%s' "$VPCONFIGURE_GIT_BRANCH" | tr '[:upper:]' '[:lower:]')
   case "$b" in
-    freebsd|debian|centos) ;;
-    *) die "VPCONFIGURE_GIT_BRANCH=${b} недопустимо" ;;
-  esac
-
-  case "$b" in
-    debian)
-      run_linux debian "$@"
-      ;;
     centos)
-      run_linux centos "$@"
+      run_centos "$@"
       ;;
-    freebsd)
-      if [[ "${1:-}" == '-h' || "${1:-}" == '--help' ]]; then
-        usage
-        exit 0
-      fi
-      printf '%s\n' "Ветка ${b}: 08_setvpmanage.sh не реализован." >&2
-      vp_result_line warning "ветка ${b}, скрипт не реализован" \
-        "vpm_http_port:unset" \
-        "password:"
+    freebsd|debian)
+      die "Этот скрипт в ветке centos поддерживает только VPCONFIGURE_GIT_BRANCH=centos (текущее: ${b})"
+      ;;
+    *)
+      die "VPCONFIGURE_GIT_BRANCH=${b} недопустимо"
       ;;
   esac
 }
