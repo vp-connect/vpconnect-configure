@@ -1,0 +1,445 @@
+#!/usr/bin/env bash
+# 07_setmtproxy
+#
+# Установка Telegram MTProxy (ветка freebsd): сборка в /opt/MTProxy, systemd mtproxy.service,
+# секрет и ссылка tg:// в каталогах рядом с артефактами WireGuard.
+#
+# Переменные окружения (export, 05_setdomain.sh и 06_setwireguard.sh) или из файла
+# /root/.vpconnect-configure.env (06 записывает VPCONFIGURE_WG_* после каждого успешного запуска).
+#   VPCONFIGURE_DOMAIN — хост в mtproxy.link
+#   VPCONFIGURE_WG_PRIVATE_KEY_PATH — dirname → mtproxy_secret.txt
+#   VPCONFIGURE_WG_CLIENT_CONFIG_PATH — каталог для mtproxy.link
+# Если WG-переменные пусты: /etc/wireguard/privatekey и /usr/wireguard/client_config — каталоги создаются,
+# при отсутствии файла privatekey (и наличии wg) генерируется ключ.
+#
+# mtproto-proxy: -p — внутренний/aux-порт (в скрипте фиксирован 8888), -H — публичный TCP для клиентов Telegram.
+#   --mtproxy-port / VPCONFIGURE_MTPROXY_PORT задают именно -H (как в рабочих установках: -p 8888 -H <клиентский>).
+#
+# Перед настройкой выставляются (и экспортируются):
+#   VPCONFIGURE_MTPROXY_PORT (по умолчанию 443) — клиентский порт (-H)
+#   VPCONFIGURE_MTPROXY_SECRET_PATH
+#   VPCONFIGURE_MTPROXY_LINK_PATH
+#   VPCONFIGURE_MTPROXY_INSTALL_DIR=/opt/MTProxy
+#
+# Сначала stdout: result:…; message:… и поля; при --export — строки export …; пояснения — stderr.
+#
+#   --mtproxy-port N      Публичный TCP-порт для клиентов (mtproto-proxy -H; по умолчанию 443)
+#   --mtproxy-secret HEX  опционально: 32 hex или dd+32 hex; неверный — случайный + предупреждение в stderr.
+#                         Указание того же секрета при переустановке сохраняет tg://proxy для клиентов.
+#   --export              после result вывести export VPCONFIGURE_MTPROXY_*
+#   --persist [FILE]      записать переменные в /root/.vpconnect-configure.env (или FILE)
+#
+# Нужна VPCONFIGURE_GIT_BRANCH из 01_getosversion.sh.
+# Пакет git не ставится здесь — только в 02_gitinstall.sh (цепочка 00–03 обязательна).
+
+set -euo pipefail
+
+_VPCONF_SCRIPT_DIR=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")")" && pwd)
+# shellcheck source=lib/vpconfigure_hooks.inc.sh
+source "${_VPCONF_SCRIPT_DIR}/lib/vpconfigure_hooks.inc.sh"
+# shellcheck source=lib/vpconfigure_firewall.inc.sh
+source "${_VPCONF_SCRIPT_DIR}/lib/vpconfigure_firewall.inc.sh"
+
+MTP_ROOT='/opt/MTProxy'
+DEFAULT_MTPROXY_PORT=443
+# Внутренний порт mtproto-proxy (-p); публичный порт задаётся -H (= opt_port / VPCONFIGURE_MTPROXY_PORT).
+MTPROXY_INTERNAL_PORT=8888
+DEFAULT_PERSIST_FILE='/root/.vpconnect-configure.env'
+SYSTEMD_NAME='mtproxy'
+WG_PRIV_DEFAULT='/etc/wireguard/privatekey'
+WG_CLIENT_DIR_DEFAULT='/usr/wireguard/client_config'
+
+vp_sanitize_msg() {
+  local s="$*"
+  s="${s//;/,}"
+  s="${s//$'\n'/ }"
+  printf '%s' "$s"
+}
+
+vp_result_line() {
+  local status=$1
+  shift
+  local msg
+  msg="$(vp_sanitize_msg "$1")"
+  shift
+  local out="result:${status}; message:${msg}"
+  while [[ $# -gt 0 ]]; do
+    out+="; $(vp_sanitize_msg "$1")"
+    shift
+  done
+  printf '%s\n' "$out"
+}
+
+die() {
+  vp_result_line error "$*"
+  exit 1
+}
+
+usage() {
+  vp_result_line success "Справка выведена в stderr"
+  cat >&2 <<EOF
+Установка MTProxy (ветка freebsd). Нужны VPCONFIGURE_DOMAIN; пути WG из export, из
+${DEFAULT_PERSIST_FILE} или умолчания ${WG_PRIV_DEFAULT} и ${WG_CLIENT_DIR_DEFAULT} (каталоги/ключ создаются при необходимости).
+
+  --mtproxy-port N      Публичный TCP-порт для клиентов (-H mtproto-proxy; по умолчанию ${DEFAULT_MTPROXY_PORT})
+  --mtproxy-secret HEX  Секрет: 32 шестнадцатеричных символа или dd<32 hex> (как в tg://proxy).
+                        Неверное значение — случайный секрет и предупреждение в stderr.
+                        Для переустановки MTProxy без смены ссылки у клиентов укажите прежний секрет.
+
+  --export              Строки export VPCONFIGURE_MTPROXY_* после result
+  --persist [FILE]      Сохранить переменные в env-файл (${DEFAULT_PERSIST_FILE} по умолчанию)
+
+  -h, --help
+
+Каталог сборки: ${MTP_ROOT}
+Файлы: mtproxy_secret.txt рядом с WG private key; mtproxy.link в WG client config.
+EOF
+}
+
+expand_tilde() {
+  local p=$1
+  if [[ "$p" == '~' || "$p" == ~/* ]]; then
+    p="${p/\~/$HOME}"
+  fi
+  printf '%s' "$p"
+}
+
+vpconfigure_source_saved_env() {
+  local f
+  f="$(expand_tilde "${1:-$DEFAULT_PERSIST_FILE}")"
+  [[ -r "$f" ]] || return 0
+  # shellcheck disable=SC1090
+  set -a
+  # shellcheck source=/dev/null
+  . "$f"
+  set +a
+  printf '%s\n' "Загружены переменные из ${f}" >&2
+}
+
+require_root() {
+  [[ "${EUID:-0}" -eq 0 ]] || die "Запускайте от root"
+}
+
+rhel_pkg_manager() {
+  if command -v dnf >/dev/null 2>&1; then
+    printf '%s' "dnf"
+    return 0
+  fi
+  if command -v yum >/dev/null 2>&1; then
+    printf '%s' "yum"
+    return 0
+  fi
+  return 1
+}
+
+install_mtproxy_packages() {
+  local pm
+  pm=$(rhel_pkg_manager) || die "Не найден dnf/yum для установки зависимостей MTProxy"
+  "$pm" -y install curl gcc make openssl-devel zlib-devel wireguard-tools >/dev/null 2>&1 \
+    || die "Не удалось установить базовые зависимости MTProxy через ${pm}"
+  if ! command -v xxd >/dev/null 2>&1; then
+    "$pm" -y install vim-common >/dev/null 2>&1 || true
+  fi
+  command -v xxd >/dev/null 2>&1 || die "Команда xxd недоступна (нужен пакет vim-common)"
+}
+
+# Каталог для privatekey (700), при отсутствии файла — wg genkey; каталог client_config (755).
+ensure_wg_private_and_client_paths() {
+  local priv=$1
+  local cdir=$2
+  local pdir
+  pdir="$(dirname -- "$priv")"
+  install -d -m 700 -- "$pdir"
+  if [[ ! -f "$priv" ]]; then
+    command -v wg >/dev/null 2>&1 || die "Нет файла ${priv} и команды wg (нужен пакет wireguard-tools)"
+    umask 077
+    wg genkey >"$priv"
+    umask 022
+    chmod 600 -- "$priv"
+    printf '%s\n' "Создан файл ключа WireGuard: ${priv}" >&2
+  fi
+  install -d -m 755 -- "$cdir"
+}
+
+open_mtproxy_tcp_in_firewall() {
+  local port=$1
+
+  if command -v firewall-cmd >/dev/null 2>&1; then
+    if vp_firewalld_add_port "$port" tcp; then
+      printf '%s\n' "firewalld: ${port}/tcp добавлен (если отсутствовал)." >&2
+      return 0
+    fi
+    printf '%s\n' "firewalld недоступен или не активен — откройте TCP ${port} после запуска firewalld." >&2
+    return 0
+  fi
+
+  printf '%s\n' "firewall-cmd не найден: откройте TCP ${port} вручную или установите firewalld." >&2
+}
+
+merge_mtproxy_into_env_file() {
+  local f=$1
+  shift
+  local d tmp
+  d="$(dirname -- "$f")"
+  [[ -d "$d" ]] || mkdir -p -- "$d"
+  tmp="$(mktemp)"
+  umask 077
+  if [[ -f "$f" ]]; then
+    grep -vE '^export[[:space:]]+VPCONFIGURE_MTPROXY_(PORT|SECRET_PATH|LINK_PATH|INSTALL_DIR)=|^# VPCONFIGURE_MTPROXY \(07_setmtproxy' "$f" >"$tmp" || true
+  else
+    : >"$tmp"
+  fi
+  {
+    if [[ -s "$tmp" ]] && [[ "$(tail -c1 "$tmp" 2>/dev/null || true)" != $'\n' ]]; then
+      printf '\n'
+    fi
+    printf '# VPCONFIGURE_MTPROXY (07_setmtproxy.sh --persist)\n'
+    while [[ $# -ge 2 ]]; do
+      printf 'export %s=%q\n' "$1" "$2"
+      shift 2
+    done
+  } >>"$tmp"
+  mv -f -- "$tmp" "$f"
+  chmod 600 -- "$f" 2>/dev/null || true
+}
+
+emit_mtproxy_exports() {
+  printf 'export VPCONFIGURE_MTPROXY_PORT=%q\n' "$1"
+  printf 'export VPCONFIGURE_MTPROXY_SECRET_PATH=%q\n' "$2"
+  printf 'export VPCONFIGURE_MTPROXY_LINK_PATH=%q\n' "$3"
+  printf 'export VPCONFIGURE_MTPROXY_INSTALL_DIR=%q\n' "$4"
+}
+
+# MTProxy: -S принимает 32 hex-символа (16 байт); в ссылке tg:// префикс dd перед тем же hex.
+gen_mtproxy_secret_hex() (
+  set +o pipefail 2>/dev/null || true
+  head -c 16 /dev/urandom | xxd -ps
+)
+
+# stdout: нормализованный 32-символьный hex; код 1 — не подходит.
+mtproxy_normalize_secret_or_fail() {
+  local raw=$1
+  raw=$(printf '%s' "$raw" | tr -d ' \t\r\n' | tr '[:upper:]' '[:lower:]')
+  if [[ "$raw" =~ ^dd[0-9a-f]{32}$ ]]; then
+    printf '%s' "${raw:2}"
+    return 0
+  fi
+  if [[ "$raw" =~ ^[0-9a-f]{32}$ ]]; then
+    printf '%s' "$raw"
+    return 0
+  fi
+  return 1
+}
+
+_write_mtproxy_secret_file() {
+  local path=$1
+  local hex=$2
+  local msg=$3
+  umask 077
+  printf '%s' "$hex" >"$path"
+  umask 022
+  chmod 600 -- "$path"
+  printf '%s\n' "$msg" >&2
+}
+
+run_freebsd() {
+  local opt_port=''
+  local opt_secret=''
+  local mode_export=0
+  local persist=0
+  local persist_file=$DEFAULT_PERSIST_FILE
+
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --mtproxy-port)
+        [[ $# -ge 2 ]] || die "После --mtproxy-port нужен номер порта"
+        opt_port=$2
+        shift 2
+        ;;
+      --mtproxy-secret)
+        [[ $# -ge 2 ]] || die "После --mtproxy-secret нужен токен (32 hex или dd+32 hex)"
+        opt_secret=$2
+        shift 2
+        ;;
+      --export)
+        mode_export=1
+        shift
+        ;;
+      --persist)
+        persist=1
+        shift
+        if [[ -n "${1:-}" && "$1" != -* ]]; then
+          persist_file=$1
+          shift
+        fi
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        die "Неизвестный аргумент: $1"
+        ;;
+    esac
+  done
+
+  vpconfigure_source_saved_env "$DEFAULT_PERSIST_FILE"
+
+  if [[ -z "${VPCONFIGURE_WG_PRIVATE_KEY_PATH:-}" ]]; then
+    export VPCONFIGURE_WG_PRIVATE_KEY_PATH="$WG_PRIV_DEFAULT"
+    printf '%s\n' "VPCONFIGURE_WG_PRIVATE_KEY_PATH не задан — использую ${WG_PRIV_DEFAULT}" >&2
+  fi
+  if [[ -z "${VPCONFIGURE_WG_CLIENT_CONFIG_PATH:-}" ]]; then
+    export VPCONFIGURE_WG_CLIENT_CONFIG_PATH="$WG_CLIENT_DIR_DEFAULT"
+    printf '%s\n' "VPCONFIGURE_WG_CLIENT_CONFIG_PATH не задан — использую ${WG_CLIENT_DIR_DEFAULT}" >&2
+  fi
+
+  : "${VPCONFIGURE_DOMAIN:?Задайте VPCONFIGURE_DOMAIN (05_setdomain.sh) или добавьте в ${DEFAULT_PERSIST_FILE}}"
+  : "${VPCONFIGURE_WG_PRIVATE_KEY_PATH:?}"
+  : "${VPCONFIGURE_WG_CLIENT_CONFIG_PATH:?}"
+
+  [[ -n "$opt_port" ]] || opt_port=$DEFAULT_MTPROXY_PORT
+  if ! [[ "$opt_port" =~ ^[0-9]+$ ]] || [[ "$opt_port" -lt 1 || "$opt_port" -gt 65535 ]]; then
+    die "Некорректный порт MTProxy: ${opt_port} (нужно 1–65535)"
+  fi
+
+  persist_file="$(expand_tilde "$persist_file")"
+
+  local wg_priv
+  wg_priv="$(expand_tilde "$VPCONFIGURE_WG_PRIVATE_KEY_PATH")"
+  local wg_conf_dir
+  wg_conf_dir="$(expand_tilde "$VPCONFIGURE_WG_CLIENT_CONFIG_PATH")"
+
+  local secret_dir
+  secret_dir="$(dirname -- "$wg_priv")"
+  local secret_path="${secret_dir}/mtproxy_secret.txt"
+  local link_path="${wg_conf_dir}/mtproxy.link"
+  local effective_host
+  effective_host=$(printf '%s' "$VPCONFIGURE_DOMAIN" | tr -d '\r\n')
+
+  export VPCONFIGURE_MTPROXY_PORT="$opt_port"
+  export VPCONFIGURE_MTPROXY_SECRET_PATH="$secret_path"
+  export VPCONFIGURE_MTPROXY_LINK_PATH="$link_path"
+  export VPCONFIGURE_MTPROXY_INSTALL_DIR="$MTP_ROOT"
+
+  require_root
+
+  install_mtproxy_packages
+
+  command -v git >/dev/null 2>&1 || die "git не найден в PATH, сначала 02_gitinstall.sh"
+
+  ensure_wg_private_and_client_paths "$wg_priv" "$wg_conf_dir"
+
+  local SECRET
+  if [[ -n "$opt_secret" ]]; then
+    if SECRET=$(mtproxy_normalize_secret_or_fail "$opt_secret"); then
+      _write_mtproxy_secret_file "$secret_path" "$SECRET" "Записан секрет из опции --mtproxy-secret: ${secret_path}"
+    else
+      printf '%s\n' "Указанный --mtproxy-secret не подходит (нужны 32 hex или dd и 32 hex); генерирую случайный секрет." >&2
+      SECRET=$(gen_mtproxy_secret_hex)
+      SECRET=$(printf '%s' "$SECRET" | tr -d '\r\n')
+      [[ -n "$SECRET" && "$SECRET" =~ ^[0-9a-f]{32}$ ]] || die "Не удалось сгенерировать секрет MTProxy"
+      _write_mtproxy_secret_file "$secret_path" "$SECRET" "Записан новый секрет: ${secret_path}"
+    fi
+  elif [[ -f "$secret_path" && -s "$secret_path" ]]; then
+    SECRET=$(tr -d ' \t\r\n' <"$secret_path" | tr '[:upper:]' '[:lower:]')
+    [[ -n "$SECRET" ]] || die "Файл секрета пуст: ${secret_path}"
+    printf '%s\n' "Использую существующий секрет из ${secret_path}" >&2
+  else
+    SECRET=$(gen_mtproxy_secret_hex)
+    SECRET=$(printf '%s' "$SECRET" | tr -d '\r\n')
+    [[ -n "$SECRET" && "$SECRET" =~ ^[0-9a-f]{32}$ ]] || die "Не удалось сгенерировать секрет MTProxy"
+    _write_mtproxy_secret_file "$secret_path" "$SECRET" "Записан новый секрет: ${secret_path}"
+  fi
+
+  if [[ ! -d "${MTP_ROOT}/.git" ]]; then
+    rm -rf -- "$MTP_ROOT"
+    git clone --depth 1 https://github.com/TelegramMessenger/MTProxy.git "$MTP_ROOT" \
+      || die "git clone MTProxy не выполнен"
+  fi
+
+  local nj
+  nj=$(nproc 2>/dev/null || printf '2')
+  make -C "$MTP_ROOT" -j"$nj" || die "Сборка MTProxy в ${MTP_ROOT} не удалась"
+
+  local BIN_DIR="${MTP_ROOT}/objs/bin"
+  cd "$BIN_DIR"
+  curl -fsSL -o proxy-multi.conf https://core.telegram.org/getProxyConfig \
+    || die "Не удалось скачать proxy-multi.conf"
+  curl -fsSL -o proxy-secret https://core.telegram.org/getProxySecret \
+    || die "Не удалось скачать proxy-secret"
+
+  umask 022
+  printf 'tg://proxy?server=%s&port=%s&secret=dd%s\n' "$effective_host" "$opt_port" "$SECRET" >"$link_path"
+  chmod 644 -- "$link_path"
+  printf '%s\n' "Ссылка: ${link_path}" >&2
+
+  cat >/etc/systemd/system/${SYSTEMD_NAME}.service <<EOF
+[Unit]
+Description=Telegram MTProxy
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=${BIN_DIR}
+ExecStart=${BIN_DIR}/mtproto-proxy -u nobody -p ${MTPROXY_INTERNAL_PORT} -H ${opt_port} -S ${SECRET} --aes-pwd ${BIN_DIR}/proxy-secret ${BIN_DIR}/proxy-multi.conf
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  systemctl disable mtproto-proxy 2>/dev/null || true
+  rm -f /etc/systemd/system/mtproto-proxy.service
+
+  systemctl daemon-reload
+  systemctl enable "${SYSTEMD_NAME}"
+  systemctl restart "${SYSTEMD_NAME}" 2>/dev/null || systemctl start "${SYSTEMD_NAME}" 2>/dev/null \
+    || die "Не удалось запустить ${SYSTEMD_NAME}.service"
+
+  open_mtproxy_tcp_in_firewall "$opt_port"
+
+  vp_result_line success "MTProxy установлен и запущен" \
+    "mtproxy_port:${opt_port}" \
+    "mtproxy_secret_path:${secret_path}" \
+    "mtproxy_link_path:${link_path}" \
+    "mtproxy_install_dir:${MTP_ROOT}"
+
+  if [[ "$mode_export" -eq 1 ]]; then
+    emit_mtproxy_exports "$opt_port" "$secret_path" "$link_path" "$MTP_ROOT"
+  fi
+
+  if [[ "$persist" -eq 1 ]]; then
+    merge_mtproxy_into_env_file "$persist_file" \
+      VPCONFIGURE_MTPROXY_PORT "$opt_port" \
+      VPCONFIGURE_MTPROXY_SECRET_PATH "$secret_path" \
+      VPCONFIGURE_MTPROXY_LINK_PATH "$link_path" \
+      VPCONFIGURE_MTPROXY_INSTALL_DIR "$MTP_ROOT"
+    vp_install_bashrc_hook "$persist_file"
+    if vp_install_profile_d_hook "$persist_file"; then
+      printf '%s\n' "Переменные VPCONFIGURE_MTPROXY_* записаны в ${persist_file}" >&2
+    else
+      printf '%s\n' "Переменные записаны в ${persist_file} (без /etc/profile.d)" >&2
+    fi
+  fi
+}
+
+main() {
+  : "${VPCONFIGURE_GIT_BRANCH:?Сначала 01_getosversion.sh}"
+
+  local b
+  b=$(printf '%s' "$VPCONFIGURE_GIT_BRANCH" | tr '[:upper:]' '[:lower:]')
+  case "$b" in
+    freebsd)
+      run_freebsd "$@"
+      ;;
+    debian|centos)
+      die "Этот скрипт в ветке freebsd поддерживает только VPCONFIGURE_GIT_BRANCH=freebsd (текущее: ${b})"
+      ;;
+    *)
+      die "VPCONFIGURE_GIT_BRANCH=${b} недопустимо"
+      ;;
+  esac
+}
+
+main "$@"
