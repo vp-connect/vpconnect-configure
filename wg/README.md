@@ -2,13 +2,15 @@
 
 Набор **операционных** сценариев для сервера с уже поднятым WireGuard (после **`06_setwireguard.sh`** или эквивалента): учёт клиентов в **`/etc/wireguard/<имя>.conf`** (имя — **`VPCONFIGURE_WIREGUARD_INTERFACE_NAME`** из env после **`06`**, иначе **`detect_wg_interface_name`** из **`detect_wg_iface.inc.sh`**, обычно **`wg0`**), ключи и клиентские `.conf`, QR в текстовом виде.
 
-Они **не** входят в нумерованную цепочку `00–08` как отдельные шаги, но при успешном **`06_setwireguard.sh`** (ветка debian), если рядом с ним на сервере есть каталог **`wg/`** с этими `*.sh`, скрипт **06** выставляет им **`chmod a+x`** и создаёт **симлинки в `/usr/local/bin/`** (вызов из консоли: `wg.sh help` и т.д.).
+Они **не** входят в нумерованную цепочку `00–08` как отдельные шаги, но при успешном **`06_setwireguard.sh`** (в этой ветке только `debian`), если рядом с ним на сервере есть каталог **`wg/`** с этими `*.sh`, скрипт **06** выставляет им **`chmod a+x`** и создаёт **симлинки в `/usr/local/bin/`** (вызов из консоли: `wg.sh help` и т.д.).
+
+В этой ветке все `wg/*.sh` ожидают `VPCONFIGURE_GIT_BRANCH=debian` и завершаются с ошибкой при других значениях.
 
 ## Зависимости
 
 - Утилиты **`wg`**, **`wg-quick`** (пакет `wireguard-tools` / аналог).
 - **`qrencode`** — для `create_client.sh` (ANSI QR в `.txt`).
-- Права **root** для изменения `wg0.conf` и `wg syncconf`.
+- Права **root** для изменения `/etc/wireguard/<iface>.conf` и `wg syncconf`.
 
 ## Пути и согласованность с `06_setwireguard.sh`
 
@@ -34,7 +36,7 @@ for f in /path/to/vpconnect-configure/wg/*.sh; do sudo ln -sf "$f" /usr/local/bi
 | Файл | Назначение |
 |------|------------|
 | **`wg.sh`** | Обёртка: `create`, `delete`, `enable`/`disable`, `list` → вызывает остальные скрипты из фиксированных путей. |
-| **`create_client.sh`** | Новый клиент: ключи, запись `[Peer]` в `wg0.conf`, `.conf`, QR; `wg syncconf`. |
+| **`create_client.sh`** | Новый клиент: ключи, запись `[Peer]` в `<iface>.conf`, `.conf`, QR; `wg syncconf`. |
 | **`delete_client.sh`** | Удаление блока клиента, файлов ключей/конфига/QR; `wg syncconf`. |
 | **`toggle_client.sh`** | Включение/отключение пира комментированием строк блока `[Peer]`; `wg syncconf`. |
 | **`list_users.sh`** | Разбор конфига WG по маркерам `# Client: …`, фильтры `--all` / `--enabled` / `--disabled`, `--names-only`. |

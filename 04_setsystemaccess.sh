@@ -17,7 +17,7 @@
 #                              [--enable-firewall]
 #
 # Нужна переменная VPCONFIGURE_GIT_BRANCH из 01_getosversion.sh (freebsd, debian, centos).
-# Полная логика только для debian; для freebsd и centos — предупреждение без изменений системы.
+# Ветка debian: выполняется только при VPCONFIGURE_GIT_BRANCH=debian.
 
 set -euo pipefail
 
@@ -343,24 +343,14 @@ main() {
   local b
   b=$(printf '%s' "$VPCONFIGURE_GIT_BRANCH" | tr '[:upper:]' '[:lower:]')
   case "$b" in
-    freebsd|debian|centos) ;;
-    *) die "VPCONFIGURE_GIT_BRANCH=${b} недопустимо" ;;
-  esac
-
-  case "$b" in
     debian)
       run_debian "$@"
       ;;
     freebsd|centos)
-      if [[ "${1:-}" == '-h' || "${1:-}" == '--help' ]]; then
-        usage
-        exit 0
-      fi
-      printf '%s\n' "Ветка ${b}: 04_setsystemaccess.sh пока не реализован, система не изменена." >&2
-      vp_result_line warning "ветка ${b}, скрипт не реализован" \
-        "step_root_password:skipped" \
-        "step_ssh_port:skipped" \
-        "step_ssh_public_key:skipped"
+      die "Этот скрипт в ветке debian поддерживает только VPCONFIGURE_GIT_BRANCH=debian (текущее: ${b})"
+      ;;
+    *)
+      die "VPCONFIGURE_GIT_BRANCH=${b} недопустимо"
       ;;
   esac
 }

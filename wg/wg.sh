@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # wg.sh
 #
-# Удобная обёртка над установленными в /usr/local/bin скриптами управления клиентами WireGuard.
+# Удобная обёртка над установленными в /usr/local/bin скриптами управления клиентами WireGuard
+# на серверах debian-based.
+# В этой ветке допускается только VPCONFIGURE_GIT_BRANCH=debian.
 # Не часть нумерованной цепочки 00–08; предполагается уже поднятый WireGuard (06; имя — VPCONFIGURE_WIREGUARD_INTERFACE_NAME из env или detect_wg_interface_name в дочерних скриптах).
 #
 # Вызываемые пути (должны существовать и быть исполняемыми):
@@ -28,6 +30,33 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
+
+expand_tilde() {
+    local p=$1
+    if [[ "$p" == '~' || "$p" == ~/* ]]; then
+        p="${p/\~/$HOME}"
+    fi
+    printf '%s' "$p"
+}
+
+vpconfigure_source_saved_env() {
+    local f=${1:-/root/.vpconnect-configure.env}
+    f="$(expand_tilde "$f")"
+    [[ -r "$f" ]] || return 0
+    # shellcheck disable=SC1090
+    set -a
+    . "$f"
+    set +a
+}
+
+require_debian_branch() {
+    local b
+    b=$(printf '%s' "${VPCONFIGURE_GIT_BRANCH:-}" | tr '[:upper:]' '[:lower:]')
+    if [[ "$b" != "debian" ]]; then
+        echo -e "${RED}Ошибка: wg.sh в ветке debian поддерживает только VPCONFIGURE_GIT_BRANCH=debian (текущее: ${b:-unset}).${NC}"
+        exit 1
+    fi
+}
 
 usage() {
     echo "Использование: wg.sh <команда> [параметры]"
@@ -80,6 +109,8 @@ toggle_all() {
 }
 
 check_scripts
+vpconfigure_source_saved_env "/root/.vpconnect-configure.env"
+require_debian_branch
 
 COMMAND="$1"
 shift

@@ -30,6 +30,9 @@
 
 Скрипты **`02`–`08`** запускаются **после** `01` и опираются на `VPCONFIGURE_GIT_BRANCH`. **`00`** и **`01`** переменную не требуют.
 
+Для текущей **debian-ветки репозитория** действует политика: скрипты **`04`–`08`**, каталог **`lib/`** и runtime-скрипты **`wg/`** выполняются только при `VPCONFIGURE_GIT_BRANCH=debian` (иначе `result:error`).
+Скрипты **`00`–`03`** остаются универсальными для `freebsd|debian|centos`.
+
 ## Переменные окружения (`VPCONFIGURE_*`)
 
 Общие правила:
@@ -43,7 +46,7 @@
 | **`VPCONFIGURE_GIT_BRANCH`** | Семейство ОС для выбора ветки сценариев и способа установки пакетов: **`freebsd`**, **`debian`** или **`centos`**. Задаётся скриптом **`01_getosversion.sh`** (или вручную). **Обязательна** для **`02`–`08`** (проверка в `main`). |
 | **`VPCONFIGURE_REPO_URL`** | URL git‑репозитория с конфигурацией (по умолчанию репозиторий vpconnect-configure). Использует **`03_getconfigure.sh`**, если не заданы флаги `--repo`. |
 | **`VPCONFIGURE_INSTALL_DIR`** | Каталог, куда **`03_getconfigure.sh`** клонирует или обновляет файлы (по умолчанию относительный `./vpconnect-configure`). |
-| **`VPCONFIGURE_DOMAIN`** | Публичное **имя или IP** сервера (FQDN или адрес), подставляется в **`mtproxy.link`**, в настройки VPManage и т.п. Задаётся **`05_setdomain.sh`** или вручную; **нужна** для **`07`** и **`08`** (ветка debian). |
+| **`VPCONFIGURE_DOMAIN`** | Публичное **имя или IP** сервера (FQDN или адрес), подставляется в **`mtproxy.link`**, в настройки VPManage и т.п. Задаётся **`05_setdomain.sh`** или вручную; **нужна** для **`07`** и **`08`** (в этой ветке — debian-only). |
 | **`VPCONFIGURE_DOMAIN_SERVICE_URL`** | Базовый URL **REST** для опции **`05_setdomain.sh --domain-client-key`** (запрос FQDN по ключу). По умолчанию заглушка в коде **`05`**; для реального сервиса задайте до запуска **`05`**. |
 | **`VPCONFIGURE_WG_PORT`** | **UDP‑порт** прослушивания WireGuard на сервере. Выставляет **`06_setwireguard.sh`** (CLI: **`--wg-port`**, иначе по умолчанию **51820**). |
 | **`VPCONFIGURE_WG_CLIENT_CERT_PATH`** | Каталог **сертификатов/ключей** на сервере: здесь лежит файл **публичного ключа сервера** (базовое имя задаётся в **`06`**). По умолчанию **`/usr/wireguard/client_cert`**. |
@@ -82,7 +85,7 @@
 | **`VPCONFIGURE_VPM_LOGIN_MAX_FAILED_ATTEMPTS`** | Лимит неверных попыток входа с IP (по умолчанию **5**). |
 | **`VPCONFIGURE_VPM_LOGIN_LOCKOUT_MINUTES`** | Блокировка IP (минуты; по умолчанию **60**). |
 
-Служебные переменные (не `VPCONFIGURE_*`, но встречаются в сценариях): **`DEBIAN_FRONTEND=noninteractive`** при вызове **`apt-get`**; в **`03`** временно **`GIT_TERMINAL_PROMPT=0`** для неинтерактивного clone/fetch.
+Служебные переменные (не `VPCONFIGURE_*`, но встречаются в сценариях): **`DEBIAN_FRONTEND=noninteractive`** при вызове **`apt-get`** в Debian-ветке; в **`03`** временно **`GIT_TERMINAL_PROMPT=0`** для неинтерактивного clone/fetch.
 
 ## Строка результата (для автоматизации)
 
@@ -98,11 +101,11 @@
 | `01_getosversion.sh` | Семейство ОС → `VPCONFIGURE_GIT_BRANCH`, опции `--export`, `--persist` |
 | `02_gitinstall.sh` | Установка `git` по семейству |
 | `03_getconfigure.sh` | Клон/обновление репозитория |
-| `04_setsystemaccess.sh` | Пароль root, SSH‑порт, ключ (опционально **`--enable-firewall`** для управления `ufw`) |
+| `04_setsystemaccess.sh` | Пароль root, SSH‑порт, ключ (в этой ветке — только `debian`; опционально **`--enable-firewall`** через `ufw`) |
 | `05_setdomain.sh` | Hostname / домен |
-| `06_setwireguard.sh` | WireGuard (**`--wg-port`**, пути клиентских каталогов, опционально **`--wg-server-private-key-file`** — тот же приватный ключ при переустановке) |
-| `07_setmtproxy.sh` | MTProxy (**`--mtproxy-port`**, опционально **`--mtproxy-secret`** — сохранить секрет для клиентов, **`--export`**, **`--persist`**) |
-| `08_setvpmanage.sh` | VPManage |
+| `06_setwireguard.sh` | WireGuard (в этой ветке — только `debian`; **`--wg-port`**, пути клиентских каталогов, опционально **`--wg-server-private-key-file`**) |
+| `07_setmtproxy.sh` | MTProxy (в этой ветке — только `debian`; **`--mtproxy-port`**, опционально **`--mtproxy-secret`**, **`--export`**, **`--persist`**) |
+| `08_setvpmanage.sh` | VPManage (в этой ветке — только `debian`) |
 
 ## Порядок запуска (пример)
 

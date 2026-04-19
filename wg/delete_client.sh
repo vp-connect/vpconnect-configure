@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # delete_client.sh
 #
-# Удаление клиента WireGuard: блок от маркера # Client: <имя> в /etc/wireguard/wg0.conf,
-# файлы ключей, клиентский .conf и QR. Резервная копия wg0.conf → wg0.conf.bak.
-# Применение: wg syncconf wg0.
+# Удаление клиента WireGuard: блок от маркера # Client: <имя> в /etc/wireguard/<iface>.conf,
+# файлы ключей, клиентский .conf и QR. Резервная копия <iface>.conf → <iface>.conf.bak.
+# Применение: wg syncconf <iface>.
 #
 # Использование: один аргумент — имя клиента (как в маркере # Client:).
 #
@@ -11,6 +11,7 @@
 # берутся из VPCONFIGURE_* или автоопределяются; ключи/конфиги по умолчанию в /usr/wireguard/client_cert и /usr/wireguard/client_config.
 #
 # Зависимости: wg, wg-quick; права root.
+# В debian-ветке допускается только VPCONFIGURE_GIT_BRANCH=debian.
 
 set -e
 
@@ -37,6 +38,30 @@ vpconfigure_source_saved_env() {
     set +a
 }
 
+require_root() {
+    if [[ "${EUID:-0}" -ne 0 ]]; then
+        echo "Ошибка: запускайте от root." >&2
+        exit 1
+    fi
+}
+
+require_cmd() {
+    local c=$1
+    command -v "$c" >/dev/null 2>&1 || {
+        echo "Ошибка: не найдена команда '$c' в PATH." >&2
+        exit 1
+    }
+}
+
+require_debian_branch() {
+    local b
+    b=$(printf '%s' "${VPCONFIGURE_GIT_BRANCH:-}" | tr '[:upper:]' '[:lower:]')
+    if [[ "$b" != "debian" ]]; then
+        echo "Ошибка: delete_client.sh в ветке debian поддерживает только VPCONFIGURE_GIT_BRANCH=debian (текущее: ${b:-unset})." >&2
+        exit 1
+    fi
+}
+
 if [ $# -ne 1 ]; then
     echo "Использование: $0 <имя_клиента>"
     exit 1
@@ -44,6 +69,10 @@ fi
 
 NAME=$1
 vpconfigure_source_saved_env "/root/.vpconnect-configure.env"
+require_debian_branch
+require_root
+require_cmd wg
+require_cmd wg-quick
 WG_IFACE="${VPCONFIGURE_WIREGUARD_INTERFACE_NAME:-$(detect_wg_interface_name)}"
 WG_CONF="${VPCONFIGURE_WG_CONF_PATH:-/etc/wireguard/${WG_IFACE}.conf}"
 KEY_DIR="${VPCONFIGURE_WG_CLIENT_CERT_PATH:-/usr/wireguard/client_cert}"

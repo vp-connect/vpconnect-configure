@@ -518,23 +518,14 @@ main() {
   local b
   b=$(printf '%s' "$VPCONFIGURE_GIT_BRANCH" | tr '[:upper:]' '[:lower:]')
   case "$b" in
-    freebsd|debian|centos) ;;
-    *) die "VPCONFIGURE_GIT_BRANCH=${b} недопустимо" ;;
-  esac
-
-  case "$b" in
     debian)
       run_debian "$@"
       ;;
     freebsd|centos)
-      if [[ "${1:-}" == '-h' || "${1:-}" == '--help' ]]; then
-        usage
-        exit 0
-      fi
-      printf '%s\n' "Ветка ${b}: 06_setwireguard.sh не реализован." >&2
-      vp_result_line warning "ветка ${b}, скрипт не реализован" \
-        "wg_port:unset" \
-        "wg_server_public_key_path:unset"
+      die "Этот скрипт в ветке debian поддерживает только VPCONFIGURE_GIT_BRANCH=debian (текущее: ${b})"
+      ;;
+    *)
+      die "VPCONFIGURE_GIT_BRANCH=${b} недопустимо"
       ;;
   esac
 }

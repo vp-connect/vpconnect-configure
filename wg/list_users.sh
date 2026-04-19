@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # list_users.sh
 #
-# Чтение списка клиентов из /etc/wireguard/wg0.conf по маркерам «# Client: <имя>» и блокам [Peer].
+# Чтение списка клиентов из /etc/wireguard/<iface>.conf по маркерам «# Client: <имя>» и блокам [Peer].
 # Активный клиент — блок, где есть хотя бы одна непустая строка, не начинающаяся с # (раскомментированный [Peer]).
 # Отключённый — блок из закомментированных строк (как после toggle_client.sh disable).
 #
@@ -14,6 +14,7 @@
 # Вывод: stdout; ошибки (нет файла, неизвестная опция) — stderr, код выхода 1.
 #
 # Используется из wg.sh с флагом --names-only для массовых enable/disable --all.
+# В debian-ветке допускается только VPCONFIGURE_GIT_BRANCH=debian.
 
 _wg_src=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")
 _wg_dir=$(cd "$(dirname "$_wg_src")" && pwd)
@@ -39,7 +40,17 @@ vpconfigure_source_saved_env() {
     set +a
 }
 
+require_debian_branch() {
+    local b
+    b=$(printf '%s' "${VPCONFIGURE_GIT_BRANCH:-}" | tr '[:upper:]' '[:lower:]')
+    if [[ "$b" != "debian" ]]; then
+        echo "Ошибка: list_users.sh в ветке debian поддерживает только VPCONFIGURE_GIT_BRANCH=debian (текущее: ${b:-unset})." >&2
+        exit 1
+    fi
+}
+
 vpconfigure_source_saved_env "/root/.vpconnect-configure.env"
+require_debian_branch
 WG_IFACE="${VPCONFIGURE_WIREGUARD_INTERFACE_NAME:-$(detect_wg_interface_name)}"
 WG_CONF="${VPCONFIGURE_WG_CONF_PATH:-/etc/wireguard/${WG_IFACE}.conf}"
 WG_CONF="$(expand_tilde "$WG_CONF")"

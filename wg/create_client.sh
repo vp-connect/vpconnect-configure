@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # create_client.sh
 #
-# Создание клиента WireGuard: ключи, запись [Peer] в /etc/wireguard/wg0.conf, клиентский .conf,
-# QR (ansiutf8) в каталог qr. Применение без полного перезапуска: wg syncconf wg0.
+# Создание клиента WireGuard: ключи, запись [Peer] в /etc/wireguard/<iface>.conf, клиентский .conf,
+# QR (ansiutf8) в каталог qr. Применение без полного перезапуска: wg syncconf <iface>.
 #
 # Использование: один аргумент — имя клиента (латиница/без пробелов в имени маркера # Client:).
 #
@@ -24,6 +24,7 @@
 # например `10.8.0.1/24` → клиенты `10.8.0.2..254`.
 #
 # Зависимости: wg, wg-quick, qrencode; права root.
+# В debian-ветке допускается только VPCONFIGURE_GIT_BRANCH=debian.
 
 set -e
 
@@ -50,6 +51,30 @@ vpconfigure_source_saved_env() {
     set +a
 }
 
+require_root() {
+    if [[ "${EUID:-0}" -ne 0 ]]; then
+        echo "Ошибка: запускайте от root." >&2
+        exit 1
+    fi
+}
+
+require_cmd() {
+    local c=$1
+    command -v "$c" >/dev/null 2>&1 || {
+        echo "Ошибка: не найдена команда '$c' в PATH." >&2
+        exit 1
+    }
+}
+
+require_debian_branch() {
+    local b
+    b=$(printf '%s' "${VPCONFIGURE_GIT_BRANCH:-}" | tr '[:upper:]' '[:lower:]')
+    if [[ "$b" != "debian" ]]; then
+        echo "Ошибка: create_client.sh в ветке debian поддерживает только VPCONFIGURE_GIT_BRANCH=debian (текущее: ${b:-unset})." >&2
+        exit 1
+    fi
+}
+
 if [ $# -ne 1 ]; then
     echo "Использование: $0 <имя_клиента>"
     exit 1
@@ -57,6 +82,11 @@ fi
 
 NAME=$1
 vpconfigure_source_saved_env "/root/.vpconnect-configure.env"
+require_debian_branch
+require_root
+require_cmd wg
+require_cmd wg-quick
+require_cmd qrencode
 WG_IFACE="${VPCONFIGURE_WIREGUARD_INTERFACE_NAME:-$(detect_wg_interface_name)}"
 WG_CONF="${VPCONFIGURE_WG_CONF_PATH:-/etc/wireguard/${WG_IFACE}.conf}"
 KEY_DIR="${VPCONFIGURE_WG_CLIENT_CERT_PATH:-/usr/wireguard/client_cert}"

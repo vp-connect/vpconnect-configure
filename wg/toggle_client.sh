@@ -2,14 +2,15 @@
 # toggle_client.sh
 #
 # Включение или отключение клиента WireGuard без удаления блока: комментирование/раскомментирование
-# строк [Peer] и полей внутри блока (см. # Client: <имя>) в /etc/wireguard/wg0.conf.
-# Резервная копия wg0.conf.bak; применение wg syncconf wg0.
+# строк [Peer] и полей внутри блока (см. # Client: <имя>) в /etc/wireguard/<iface>.conf.
+# Резервная копия <iface>.conf.bak; применение wg syncconf <iface>.
 #
 # Использование: <имя_клиента> enable|disable
 #
 # Статус «disabled» в list_users.sh соответствует закомментированным непустым строкам блока (кроме маркера).
 #
 # Зависимости: wg, wg-quick; права root.
+# В debian-ветке допускается только VPCONFIGURE_GIT_BRANCH=debian.
 
 set -e
 
@@ -36,6 +37,30 @@ vpconfigure_source_saved_env() {
     set +a
 }
 
+require_root() {
+    if [[ "${EUID:-0}" -ne 0 ]]; then
+        echo "Ошибка: запускайте от root." >&2
+        exit 1
+    fi
+}
+
+require_cmd() {
+    local c=$1
+    command -v "$c" >/dev/null 2>&1 || {
+        echo "Ошибка: не найдена команда '$c' в PATH." >&2
+        exit 1
+    }
+}
+
+require_debian_branch() {
+    local b
+    b=$(printf '%s' "${VPCONFIGURE_GIT_BRANCH:-}" | tr '[:upper:]' '[:lower:]')
+    if [[ "$b" != "debian" ]]; then
+        echo "Ошибка: toggle_client.sh в ветке debian поддерживает только VPCONFIGURE_GIT_BRANCH=debian (текущее: ${b:-unset})." >&2
+        exit 1
+    fi
+}
+
 if [ $# -ne 2 ]; then
     echo "Использование: $0 <имя_клиента> enable|disable"
     exit 1
@@ -44,6 +69,10 @@ fi
 NAME=$1
 ACTION=$2
 vpconfigure_source_saved_env "/root/.vpconnect-configure.env"
+require_debian_branch
+require_root
+require_cmd wg
+require_cmd wg-quick
 WG_IFACE="${VPCONFIGURE_WIREGUARD_INTERFACE_NAME:-$(detect_wg_interface_name)}"
 WG_CONF="${VPCONFIGURE_WG_CONF_PATH:-/etc/wireguard/${WG_IFACE}.conf}"
 WG_CONF="$(expand_tilde "$WG_CONF")"
