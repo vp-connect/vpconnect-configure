@@ -19,7 +19,7 @@
 ## Политика ветки
 
 - `00-03` — универсальные (`freebsd|debian|centos`).
-- `04-08`, `lib/`, `wg/` — только для `VPCONFIGURE_GIT_BRANCH=centos`.
+- `04-08`, `lib/`, `wg/`, `mt/` — только для `VPCONFIGURE_GIT_BRANCH=centos`.
 - При других значениях ветки OS-зависимые скрипты возвращают `result:error` и завершаются с ненулевым кодом.
 
 ## CentOS-специфика
@@ -50,6 +50,11 @@
 | `06_setwireguard.sh` | WireGuard (CentOS-реализация) |
 | `07_setmtproxy.sh` | MTProxy (CentOS-реализация) |
 | `08_setvpmanage.sh` | VPManage (CentOS-реализация) |
+
+Runtime-утилиты (после установки сервисов):
+
+- `wg/` — управление клиентами WireGuard (`wg.sh`, `create_client.sh` и т.д.).
+- `mt/` — управление секретом MTProxy (`mt.sh`, `set_secret.sh`, `new_secret.sh`).
 
 ## Порядок запуска
 
