@@ -327,7 +327,7 @@ run_freebsd() {
   fi
 
   [[ -n "$opt_wg_address" ]] || opt_wg_address=$DEFAULT_WG_ADDRESS
-  if ! [[ "$opt_wg_address" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}\.1/24$ ]]; then
+  if ! [[ "$opt_wg_address" =~ ^([0-9]{1,3}\.){3}1/24$ ]]; then
     die "Некорректный --wg-address: ${opt_wg_address} (ожидается A.B.C.1/24)"
   fi
   local wg_net_cidr
