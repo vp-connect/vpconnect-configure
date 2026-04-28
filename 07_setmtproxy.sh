@@ -31,6 +31,7 @@
 #
 # Нужна VPCONFIGURE_GIT_BRANCH из 01_getosversion.sh.
 # Пакет git не ставится здесь — только в 02_gitinstall.sh (цепочка 00–03 обязательна).
+# После успешной настройки MTProxy: все *.sh в каталоге mt/ получают chmod +x и симлинки в /usr/local/bin.
 
 set -euo pipefail
 
@@ -174,6 +175,33 @@ open_mtproxy_tcp_in_firewall() {
   fi
 
   printf '%s\n' "firewall-cmd не найден: откройте TCP ${port} вручную или установите firewalld." >&2
+}
+
+# Каталог vpconnect-configure/mt рядом с 07_setmtproxy.sh: исполняемые права и имена в PATH (/usr/local/bin).
+mtproxy_publish_mt_scripts() {
+  local configure_root mtdir
+  configure_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  mtdir="${configure_root}/mt"
+  if [[ ! -d "$mtdir" ]]; then
+    printf '%s\n' "Предупреждение: каталог ${mtdir} не найден — публикация mt-скриптов пропущена." >&2
+    return 0
+  fi
+  local -a scripts=()
+  shopt -s nullglob
+  scripts=( "${mtdir}"/*.sh )
+  shopt -u nullglob
+  if [[ ${#scripts[@]} -eq 0 ]]; then
+    printf '%s\n' "Предупреждение: в ${mtdir} нет файлов *.sh — нечего публиковать." >&2
+    return 0
+  fi
+  chmod a+x -- "${scripts[@]}"
+  install -d -m 755 /usr/local/bin
+  local f base
+  for f in "${scripts[@]}"; do
+    base="$(basename -- "$f")"
+    ln -sf -- "$f" "/usr/local/bin/${base}"
+  done
+  printf '%s\n' "mt: ${#scripts[@]} скрипт(ов) в ${mtdir} — режим исполнения установлен, ссылки в /usr/local/bin (например: mt.sh help)." >&2
 }
 
 merge_mtproxy_into_env_file() {
@@ -398,6 +426,7 @@ EOF
     || die "Не удалось запустить ${SYSTEMD_NAME}.service"
 
   open_mtproxy_tcp_in_firewall "$opt_port"
+  mtproxy_publish_mt_scripts
 
   vp_result_line success "MTProxy установлен и запущен" \
     "mtproxy_port:${opt_port}" \
