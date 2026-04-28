@@ -177,6 +177,17 @@ open_mtproxy_tcp_in_firewall() {
   printf '%s\n' "firewall-cmd не найден: откройте TCP ${port} вручную или установите firewalld." >&2
 }
 
+# После того, как служба проработает некоторое время, новому процессу может быть присвоен PID больше 65535.
+# Функция init_common_PID в MTProxy проверяет, что PID помещается в 16 бит (!(pid & 0xffff0000)),
+# что приводит к немедленному прерыванию.
+# Ограничиваем значение параметра kernel.pid_max до 65535, чтобы PID никогда не выходили
+# за пределы 16-битного диапазона.
+configure_mtproxy_pid_max() {
+  sysctl -w kernel.pid_max=65535 >/dev/null \
+    || die "Не удалось установить kernel.pid_max=65535"
+  printf '%s\n' "Применено: kernel.pid_max=65535 (ограничение PID для MTProxy)." >&2
+}
+
 # Каталог vpconnect-configure/mt рядом с 07_setmtproxy.sh: исполняемые права и имена в PATH (/usr/local/bin).
 mtproxy_publish_mt_scripts() {
   local configure_root mtdir
@@ -422,6 +433,7 @@ EOF
 
   systemctl daemon-reload
   systemctl enable "${SYSTEMD_NAME}"
+  configure_mtproxy_pid_max
   systemctl restart "${SYSTEMD_NAME}" 2>/dev/null || systemctl start "${SYSTEMD_NAME}" 2>/dev/null \
     || die "Не удалось запустить ${SYSTEMD_NAME}.service"
 
