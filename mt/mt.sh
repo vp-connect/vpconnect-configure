@@ -35,11 +35,11 @@ vpconfigure_source_saved_env() {
   set +a
 }
 
-require_debian_branch() {
+require_freebsd_branch() {
   local b
   b=$(printf '%s' "${VPCONFIGURE_GIT_BRANCH:-}" | tr '[:upper:]' '[:lower:]')
-  if [[ "$b" != "debian" ]]; then
-    echo -e "${RED}Ошибка: mt.sh в ветке debian поддерживает только VPCONFIGURE_GIT_BRANCH=debian (текущее: ${b:-unset}).${NC}" >&2
+  if [[ "$b" != "freebsd" ]]; then
+    echo -e "${RED}Ошибка: mt.sh в ветке freebsd поддерживает только VPCONFIGURE_GIT_BRANCH=freebsd (текущее: ${b:-unset}).${NC}" >&2
     exit 1
   fi
 }
@@ -72,7 +72,7 @@ check_scripts() {
 main() {
   check_scripts
   vpconfigure_source_saved_env "/root/.vpconnect-configure.env"
-  require_debian_branch
+  require_freebsd_branch
 
   local cmd=${1:-help}
   shift || true

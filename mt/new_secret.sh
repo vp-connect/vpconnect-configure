@@ -9,6 +9,34 @@ set -euo pipefail
 _mt_src=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")
 _mt_dir=$(cd "$(dirname "$_mt_src")" && pwd)
 _set_secret="${_mt_dir}/set_secret.sh"
+DEFAULT_ENV_FILE="/root/.vpconnect-configure.env"
+
+expand_tilde() {
+  local p=$1
+  if [[ "$p" == "~" || "$p" == ~/* ]]; then
+    p="${p/\~/$HOME}"
+  fi
+  printf '%s' "$p"
+}
+
+vpconfigure_source_saved_env() {
+  local f=${1:-$DEFAULT_ENV_FILE}
+  f="$(expand_tilde "$f")"
+  [[ -r "$f" ]] || return 0
+  # shellcheck disable=SC1090
+  set -a
+  . "$f"
+  set +a
+}
+
+require_freebsd_branch() {
+  local b
+  b=$(printf '%s' "${VPCONFIGURE_GIT_BRANCH:-}" | tr '[:upper:]' '[:lower:]')
+  if [[ "$b" != "freebsd" ]]; then
+    echo "Ошибка: mt/new_secret.sh в ветке freebsd поддерживает только VPCONFIGURE_GIT_BRANCH=freebsd (текущее: ${b:-unset})." >&2
+    exit 1
+  fi
+}
 
 usage() {
   cat >&2 <<EOF
@@ -46,6 +74,9 @@ main() {
     echo "Ошибка: не найден исполняемый $_set_secret" >&2
     exit 1
   }
+
+  vpconfigure_source_saved_env "$DEFAULT_ENV_FILE"
+  require_freebsd_branch
 
   require_cmd head
   require_cmd xxd

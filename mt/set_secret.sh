@@ -9,7 +9,7 @@
 #   * /etc/systemd/system/mtproxy.service (или mtproto-proxy.service), если есть.
 # - перезапускает сервис после изменения unit-файла.
 #
-# Ветка debian: допускается только VPCONFIGURE_GIT_BRANCH=debian.
+# Ветка freebsd: допускается только VPCONFIGURE_GIT_BRANCH=freebsd.
 
 set -euo pipefail
 
@@ -45,11 +45,11 @@ require_root() {
   }
 }
 
-require_debian_branch() {
+require_freebsd_branch() {
   local b
   b=$(printf '%s' "${VPCONFIGURE_GIT_BRANCH:-}" | tr '[:upper:]' '[:lower:]')
-  if [[ "$b" != "debian" ]]; then
-    echo "Ошибка: mt/set_secret.sh в ветке debian поддерживает только VPCONFIGURE_GIT_BRANCH=debian (текущее: ${b:-unset})." >&2
+  if [[ "$b" != "freebsd" ]]; then
+    echo "Ошибка: mt/set_secret.sh в ветке freebsd поддерживает только VPCONFIGURE_GIT_BRANCH=freebsd (текущее: ${b:-unset})." >&2
     exit 1
   fi
 }
@@ -189,7 +189,7 @@ main() {
   fi
 
   vpconfigure_source_saved_env "$DEFAULT_ENV_FILE"
-  require_debian_branch
+  require_freebsd_branch
   require_root
 
   local secret_hex
