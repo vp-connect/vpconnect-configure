@@ -148,9 +148,26 @@ rhel_pkg_manager() {
   return 1
 }
 
+# wireguard-tools и qrencode на RHEL/CentOS/AlmaLinux/Rocky обычно в EPEL; без epel-release установка падает.
+ensure_epel_release() {
+  local pm=$1
+  if rpm -q epel-release >/dev/null 2>&1; then
+    printf '%s\n' "epel-release уже установлен." >&2
+    return 0
+  fi
+  if "$pm" repolist enabled 2>/dev/null | grep -qiE '(^|[[:space:]])epel'; then
+    printf '%s\n' "Репозиторий EPEL уже включён." >&2
+    return 0
+  fi
+  printf '%s\n' "Устанавливаю epel-release (нужен для wireguard-tools, qrencode)…" >&2
+  "$pm" -y install epel-release >/dev/null 2>&1 \
+    || die "Не удалось установить epel-release через ${pm}"
+}
+
 install_wireguard_packages() {
   local pm
   pm=$(rhel_pkg_manager) || die "Не найден dnf/yum для установки WireGuard"
+  ensure_epel_release "$pm"
   if ! "$pm" -y install wireguard-tools qrencode iptables >/dev/null 2>&1; then
     "$pm" -y install wireguard-tools qrencode iptables-nft >/dev/null 2>&1 \
       || die "Не удалось установить пакеты WireGuard через ${pm}"
