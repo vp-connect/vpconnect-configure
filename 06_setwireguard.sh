@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 06_setwireguard
 #
-# Установка WireGuard (только ветка freebsd): пакеты, серверные ключи, <iface>.conf, systemd wg-quick@<iface>.
+# Установка WireGuard (только ветка debian): пакеты, серверные ключи, <iface>.conf, systemd wg-quick@<iface>.
 # Имя интерфейса WG: только автоопределение (wg/detect_wg_iface.inc.sh) — по умолчанию wg0; если уже есть
 # другой WG из «wg show» или ровно один /etc/wireguard/wg*.conf — берётся он; в env записывается VPCONFIGURE_WIREGUARD_INTERFACE_NAME.
 # Внешний (WAN) интерфейс для NAT: VPCONFIGURE_WG_WAN_IFACE или --wg-wan-interface; иначе при PostUp
@@ -58,8 +58,8 @@ SERVER_PUB_BASENAME='wg_server_public.key'
 
 DEFAULT_WG_PORT=51820
 DEFAULT_WG_ADDRESS='10.8.0.1/24'
-DEFAULT_CERT='/usr/wireguard/client_cert'
-DEFAULT_CONF_DIR='/usr/wireguard/client_config'
+DEFAULT_CERT='/usr/vpserver/client_cert'
+DEFAULT_CONF_DIR='/usr/vpserver/client_config'
 DEFAULT_PERSIST_FILE='/root/.vpconnect-configure.env'
 
 vp_sanitize_msg() {
@@ -91,7 +91,7 @@ die() {
 usage() {
   vp_result_line success "Справка выведена в stderr"
   cat >&2 <<EOF
-Установка WireGuard (сервер, ветка freebsd). Клиенты не создаются.
+Установка WireGuard (сервер, ветка debian). Клиенты не создаются.
 
   --wg-port N                    UDP-порт прослушивания (по умолчанию ${DEFAULT_WG_PORT})
 
@@ -136,28 +136,6 @@ require_root() {
   [[ "${EUID:-0}" -eq 0 ]] || die "Запускайте от root"
 }
 
-rhel_pkg_manager() {
-  if command -v dnf >/dev/null 2>&1; then
-    printf '%s' "dnf"
-    return 0
-  fi
-  if command -v yum >/dev/null 2>&1; then
-    printf '%s' "yum"
-    return 0
-  fi
-  return 1
-}
-
-install_wireguard_packages() {
-  local pm
-  pm=$(rhel_pkg_manager) || die "Не найден dnf/yum для установки WireGuard"
-  if ! "$pm" -y install wireguard-tools qrencode iptables >/dev/null 2>&1; then
-    "$pm" -y install wireguard-tools qrencode iptables-nft >/dev/null 2>&1 \
-      || die "Не удалось установить пакеты WireGuard через ${pm}"
-  fi
-  command -v wg >/dev/null 2>&1 || die "Команда wg недоступна после установки пакетов"
-}
-
 # Постоянное включение IPv4 forwarding (клиенты WG выходят в интернет через сервер).
 ensure_ipv4_forward_sysctl() {
   local dropin=/etc/sysctl.d/99-vpconnect-wireguard-forward.conf
@@ -173,20 +151,50 @@ ensure_ipv4_forward_sysctl() {
   printf '%s\n' "IPv4 forwarding: ${dropin} и проверка /etc/sysctl.conf" >&2
 }
 
-# После установки WG: если есть активный firewalld — открыть UDP-порт и применить.
+# После установки WG: если есть ufw или активный firewalld — открыть UDP-порт и применить.
 open_wg_port_in_firewall() {
   local port=$1
 
-  if command -v firewall-cmd >/dev/null 2>&1; then
-    if vp_firewalld_add_port "$port" udp; then
-      printf '%s\n' "firewalld: порт ${port}/udp добавлен (если отсутствовал)." >&2
+  if command -v ufw >/dev/null 2>&1; then
+    if vp_ufw_has_port "$port" udp; then
+      printf '%s\n' "ufw: правило UDP ${port} уже есть — повторно не добавляю." >&2
+    else
+    printf '%s\n' "Обнаружен ufw: добавляю UDP ${port}/udp (vpconnect-wireguard)…" >&2
+    local ufw_out
+    if ufw_out=$(ufw allow "${port}/udp" comment 'vpconnect-wireguard' 2>&1); then
+      printf '%s\n' "$ufw_out" >&2
+      if ufw status 2>/dev/null | grep -qiE '^Status:[[:space:]]+active'; then
+        if ufw reload >/dev/null 2>&1; then
+          printf '%s\n' "ufw: правило применено (reload)." >&2
+        else
+          printf '%s\n' "ufw: правило добавлено, reload не выполнен (проверьте ufw)." >&2
+        fi
+      else
+        printf '%s\n' "ufw: правило добавлено (сейчас неактивен — после ufw enable подхватится)." >&2
+      fi
       return 0
     fi
-    printf '%s\n' "firewalld недоступен или не активен — откройте UDP ${port} после запуска firewalld." >&2
+    printf '%s\n' "ufw: не удалось добавить порт: ${ufw_out}" >&2
+    fi
+  fi
+
+  if command -v firewall-cmd >/dev/null 2>&1; then
+    if systemctl is-active --quiet firewalld 2>/dev/null; then
+      printf '%s\n' "Обнаружен активный firewalld: добавляю ${port}/udp…" >&2
+      if firewall-cmd --permanent --add-port="${port}/udp" >/dev/null 2>&1 \
+        && firewall-cmd --add-port="${port}/udp" >/dev/null 2>&1 \
+        && firewall-cmd --reload >/dev/null 2>&1; then
+        printf '%s\n' "firewalld: порт ${port}/udp добавлен (permanent + runtime), reload выполнен." >&2
+        return 0
+      fi
+      printf '%s\n' "firewalld: не удалось добавить порт ${port}/udp." >&2
+      return 0
+    fi
+    printf '%s\n' "firewalld установлен, но служба не активна — откройте UDP ${port} после запуска firewalld." >&2
     return 0
   fi
 
-  printf '%s\n' "firewall-cmd не найден: откройте UDP ${port} вручную или установите firewalld." >&2
+  printf '%s\n' "ufw и firewalld не найдены: откройте UDP ${port} вручную, если используется другой файрвол." >&2
 }
 
 # Каталог vpconnect-configure/wg рядом с 06_setwireguard.sh: исполняемые права и имена в PATH (/usr/local/bin).
@@ -255,7 +263,7 @@ emit_exports() {
   fi
 }
 
-run_freebsd() {
+run_debian() {
   local opt_port=''
   local opt_wg_address=''
   local opt_wan_iface=''
@@ -345,7 +353,10 @@ run_freebsd() {
 
   require_root
 
-  install_wireguard_packages
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq
+  # wg-quick использует iptables в PostUp/PostDown (NAT/forward). На минимальных образах iptables может отсутствовать.
+  apt-get install -y -qq wireguard wireguard-tools qrencode iptables
 
   local wg_iface WG_CONF
   wg_iface=$(detect_wg_interface_name)
@@ -442,6 +453,12 @@ EOF
 
   open_wg_port_in_firewall "$opt_port"
 
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qiE '^Status:[[:space:]]+active'; then
+    printf '%s\n' \
+      "Если клиенты WG не выходят в интернет: при активном ufw часто нужен ACCEPT для forward (см. /etc/default/ufw, ufw route allow)." \
+      >&2
+  fi
+
   wireguard_publish_wg_scripts
 
   export VPCONFIGURE_WG_PORT="$opt_port"
@@ -501,10 +518,10 @@ main() {
   local b
   b=$(printf '%s' "$VPCONFIGURE_GIT_BRANCH" | tr '[:upper:]' '[:lower:]')
   case "$b" in
-    freebsd)
-      run_freebsd "$@"
+    debian)
+      run_debian "$@"
       ;;
-    debian|centos)
+    freebsd|centos)
       die "Этот скрипт в ветке freebsd поддерживает только VPCONFIGURE_GIT_BRANCH=freebsd (текущее: ${b})"
       ;;
     *)

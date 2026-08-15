@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 08_setvpmanage
 #
-# Установка VPManage (ветка freebsd): клон в /opt/VPManage, venv, settings.env, systemd (gunicorn + Flask).
+# Установка VPManage (ветка debian): клон в /opt/VPManage, venv, settings.env, systemd (gunicorn + Flask).
 # Пакет git не ставится здесь — только в 02_gitinstall.sh (цепочка 00–03 обязательна).
 # Репозиторий: https://github.com/vp-connect/vpconnect-manage.git
 #
@@ -67,7 +67,7 @@ die() {
 usage() {
   vp_result_line success "Справка выведена в stderr"
   cat >&2 <<EOF
-Установка VPManage (ветка freebsd). Нужен VPCONFIGURE_DOMAIN; пути из env или ${DEFAULT_PERSIST_FILE}.
+Установка VPManage (ветка debian). Нужен VPCONFIGURE_DOMAIN; пути из env или ${DEFAULT_PERSIST_FILE}.
 
   --http-port N         HTTP-порт gunicorn (по умолчанию ${DEFAULT_HTTP_PORT})
   --vpm-password PASS   Пароль админки (иначе сгенерируется 10 символов A–Za–z0–9)
@@ -107,27 +107,6 @@ require_root() {
   [[ "${EUID:-0}" -eq 0 ]] || die "Запускайте от root"
 }
 
-rhel_pkg_manager() {
-  if command -v dnf >/dev/null 2>&1; then
-    printf '%s' "dnf"
-    return 0
-  fi
-  if command -v yum >/dev/null 2>&1; then
-    printf '%s' "yum"
-    return 0
-  fi
-  return 1
-}
-
-install_vpmanage_python_stack() {
-  local pm
-  pm=$(rhel_pkg_manager) || die "Не найден dnf/yum для установки python3"
-  printf '%s\n' "VPManage: установка python3 и pip через ${pm}…" >&2
-  "$pm" -y install python3 python3-pip >/dev/null 2>&1 \
-    || die "Не удалось установить python3/python3-pip через ${pm}"
-  command -v python3 >/dev/null 2>&1 || die "python3 недоступен после установки"
-}
-
 # head закрывает pipe → tr получает SIGPIPE; при set -o pipefail весь конвейер даёт ненулевой код
 # и set -e обрывает скрипт без die(). Подпроцесс отключает pipefail только для этой строки.
 gen_vpm_password() (
@@ -147,16 +126,32 @@ gen_flask_secret_key() (
 open_vpm_http_in_firewall() {
   local port=$1
 
-  if command -v firewall-cmd >/dev/null 2>&1; then
-    if vp_firewalld_add_port "$port" tcp; then
-      printf '%s\n' "firewalld: TCP ${port} добавлен (если отсутствовал)." >&2
+  if command -v ufw >/dev/null 2>&1; then
+    if vp_ufw_has_port "$port" tcp; then
+      printf '%s\n' "ufw: правило TCP ${port} уже есть — повторно не добавляю." >&2
+    else
+    printf '%s\n' "ufw: добавляю TCP ${port} (vpconnect-vpmanage)…" >&2
+    local ufw_out
+    if ufw_out=$(ufw allow "${port}/tcp" comment 'vpconnect-vpmanage' 2>&1); then
+      printf '%s\n' "$ufw_out" >&2
+      if ufw status 2>/dev/null | grep -qiE '^Status:[[:space:]]+active'; then
+        ufw reload >/dev/null 2>&1 || true
+      fi
       return 0
     fi
-    printf '%s\n' "firewalld недоступен или не активен — откройте TCP ${port} после запуска firewalld." >&2
+    printf '%s\n' "ufw: не удалось добавить порт: ${ufw_out}" >&2
+    fi
+  fi
+
+  if command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld 2>/dev/null; then
+    printf '%s\n' "firewalld: TCP ${port}…" >&2
+    firewall-cmd --permanent --add-port="${port}/tcp" >/dev/null 2>&1 \
+      && firewall-cmd --add-port="${port}/tcp" >/dev/null 2>&1 \
+      && firewall-cmd --reload >/dev/null 2>&1
     return 0
   fi
 
-  printf '%s\n' "firewall-cmd не найден: откройте TCP ${port} вручную или установите firewalld." >&2
+  printf '%s\n' "Откройте TCP ${port} вручную при необходимости." >&2
 }
 
 merge_vpm_into_env_file() {
@@ -195,7 +190,7 @@ emit_vpm_exports() {
   printf 'export VPCONFIGURE_MTPROXY_LINK_PATH=%q\n' "$6"
 }
 
-run_freebsd() {
+run_debian() {
   local opt_http=''
   local opt_pw=''
   local mode_export=0
@@ -275,7 +270,7 @@ run_freebsd() {
   persist_file="$(expand_tilde "$persist_file")"
 
   local mtproxy_link_file wg_client_conf_dir wg_keys_dir login_max login_lock wg_conf_path \
-    wg_sync_min wg_if_name wg_network_cidr wg_endpoint wg_pub_host wg_listen_port wg_dns
+    wg_sync_min wg_if_name wg_network_cidr wg_endpoint wg_pub_host wg_listen_port wg_dns vp_service_type
 
   mtproxy_link_file="$(expand_tilde "$VPCONFIGURE_MTPROXY_LINK_PATH")"
   wg_client_conf_dir="$(expand_tilde "${VPCONFIGURE_WIREGUARD_CLIENT_CONFIG_DIR:-$VPCONFIGURE_VP_CLIENT_CONFIG_PATH}")"
@@ -283,7 +278,7 @@ run_freebsd() {
 
   login_max="${VPCONFIGURE_VPM_LOGIN_MAX_FAILED_ATTEMPTS:-5}"
   login_lock="${VPCONFIGURE_VPM_LOGIN_LOCKOUT_MINUTES:-60}"
-  wg_if_name="${VPCONFIGURE_WIREGUARD_INTERFACE_NAME:-}"
+  wg_if_name="${VPCONFIGURE_VPSERVER_INTERFACE_NAME:-${VPCONFIGURE_WIREGUARD_INTERFACE_NAME:-}}"
   if [[ -z "$wg_if_name" ]]; then
     local _08s _08r
     _08s=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")
@@ -292,23 +287,29 @@ run_freebsd() {
     source "${_08r}/wg/detect_wg_iface.inc.sh"
     wg_if_name=$(detect_wg_interface_name)
   fi
-  if [[ -v VPCONFIGURE_VP_CONF_PATH ]]; then
-    wg_conf_path="$(expand_tilde "${VPCONFIGURE_VP_CONF_PATH:-}")"
-  elif [[ -v VPCONFIGURE_WG_CONF_PATH ]]; then
-    wg_conf_path="$(expand_tilde "${VPCONFIGURE_WG_CONF_PATH:-}")"
-  else
-    wg_conf_path="/etc/wireguard/${wg_if_name}.conf"
-  fi
-  wg_sync_min="${VPCONFIGURE_WIREGUARD_SYNC_INTERVAL_MINUTES:-5}"
-  wg_network_cidr="${VPCONFIGURE_WIREGUARD_NETWORK_CIDR:-}"
-  wg_endpoint="${VPCONFIGURE_WIREGUARD_ENDPOINT:-}"
-  wg_pub_host="${VPCONFIGURE_WIREGUARD_PUBLIC_HOST:-${VPCONFIGURE_DOMAIN}}"
-  wg_listen_port="${VPCONFIGURE_WIREGUARD_LISTEN_PORT:-${VPCONFIGURE_VP_PORT:-${VPCONFIGURE_WG_PORT:-0}}}"
-  wg_dns="${VPCONFIGURE_WIREGUARD_DNS:-8.8.8.8}"
   vp_service_type="$(printf '%s' "${VPCONFIGURE_VPSERVER_TYPE:-wireguard}" | tr '[:upper:]' '[:lower:]')"
   if [[ "$vp_service_type" != "wireguard" && "$vp_service_type" != "amneziawg" ]]; then
     vp_service_type="wireguard"
   fi
+  if [[ -v VPCONFIGURE_VP_CONF_PATH ]]; then
+    wg_conf_path="$(expand_tilde "${VPCONFIGURE_VP_CONF_PATH:-}")"
+  elif [[ -v VPCONFIGURE_WG_CONF_PATH ]]; then
+    wg_conf_path="$(expand_tilde "${VPCONFIGURE_WG_CONF_PATH:-}")"
+  elif [[ "$vp_service_type" == "amneziawg" ]]; then
+    wg_conf_path="/etc/amnezia/amneziawg/${wg_if_name}.conf"
+  else
+    wg_conf_path="/etc/wireguard/${wg_if_name}.conf"
+  fi
+  # Если тип amneziawg и канонический awg-конфиг уже есть — используем его.
+  if [[ "$vp_service_type" == "amneziawg" && -f "/etc/amnezia/amneziawg/${wg_if_name}.conf" ]]; then
+    wg_conf_path="/etc/amnezia/amneziawg/${wg_if_name}.conf"
+  fi
+  wg_sync_min="${VPCONFIGURE_WIREGUARD_SYNC_INTERVAL_MINUTES:-5}"
+  wg_network_cidr="${VPCONFIGURE_WIREGUARD_NETWORK_CIDR:-${VPCONFIGURE_VPSERVER_NETWORK_CIDR:-}}"
+  wg_endpoint="${VPCONFIGURE_WIREGUARD_ENDPOINT:-}"
+  wg_pub_host="${VPCONFIGURE_WIREGUARD_PUBLIC_HOST:-${VPCONFIGURE_DOMAIN}}"
+  wg_listen_port="${VPCONFIGURE_WIREGUARD_LISTEN_PORT:-${VPCONFIGURE_VP_PORT:-${VPCONFIGURE_WG_PORT:-0}}}"
+  wg_dns="${VPCONFIGURE_WIREGUARD_DNS:-8.8.8.8}"
 
   if [[ -z "$wg_network_cidr" && -n "$wg_conf_path" && -f "$wg_conf_path" ]]; then
     local _addr
@@ -331,7 +332,11 @@ run_freebsd() {
 
   install -d -m 755 -- "$wg_keys_dir" "$wg_client_conf_dir"
 
-  install_vpmanage_python_stack
+  export DEBIAN_FRONTEND=noninteractive
+  printf '%s\n' "VPManage: apt-get update (без вывода пакетов, может занять несколько минут)…" >&2
+  apt-get update -qq
+  printf '%s\n' "VPManage: установка python3, venv, pip…" >&2
+  apt-get install -y -qq python3 python3-venv python3-pip
 
   command -v git >/dev/null 2>&1 || die "git не найден в PATH, сначала 02_gitinstall.sh"
 
@@ -543,10 +548,10 @@ main() {
   local b
   b=$(printf '%s' "$VPCONFIGURE_GIT_BRANCH" | tr '[:upper:]' '[:lower:]')
   case "$b" in
-    freebsd)
-      run_freebsd "$@"
+    debian)
+      run_debian "$@"
       ;;
-    debian|centos)
+    freebsd|centos)
       die "Этот скрипт в ветке freebsd поддерживает только VPCONFIGURE_GIT_BRANCH=freebsd (текущее: ${b})"
       ;;
     *)
