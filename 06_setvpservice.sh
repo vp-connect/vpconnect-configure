@@ -60,6 +60,7 @@ usage() {
 Установка VPN-сервиса (wireguard/amneziawg), шаг 06.
 
   --vpservice-type TYPE         wireguard | amneziawg (по умолчанию ${DEFAULT_VPSERVER_TYPE})
+  --vp-service TYPE             алиас к --vpservice-type
   --vp-port N                   UDP-порт (пробрасывается в базовую реализацию)
   --vp-address A.B.C.1/24       Адрес сервера в туннеле
   --vp-wan-interface NAME       WAN интерфейс для NAT
@@ -153,7 +154,7 @@ main() {
 
   while [[ $# -gt 0 ]]; do
     case "${1:-}" in
-      --vpservice-type)
+      --vpservice-type|--vp-service)
         [[ $# -ge 2 ]] || die "После --vpservice-type нужно значение"
         vpservice_type=$2
         shift 2
