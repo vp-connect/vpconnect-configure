@@ -34,10 +34,8 @@ detect_vp_binaries() {
 
 ensure_amnezia_tools() {
   command -v awg >/dev/null 2>&1 && command -v awg-quick >/dev/null 2>&1 && return 0
-  if command -v pkg >/dev/null 2>&1; then
-    pkg install -y amneziawg-tools >/dev/null 2>&1 || true
-    pkg install -y amneziawg >/dev/null 2>&1 || true
-  elif command -v dnf >/dev/null 2>&1; then
+
+  if command -v dnf >/dev/null 2>&1; then
     dnf -y install amneziawg-tools >/dev/null 2>&1 || true
     dnf -y install amneziawg >/dev/null 2>&1 || true
   elif command -v yum >/dev/null 2>&1; then
@@ -48,11 +46,22 @@ ensure_amnezia_tools() {
     apt-get update -qq || true
     apt-get install -y -qq amneziawg-tools >/dev/null 2>&1 || true
     apt-get install -y -qq amneziawg >/dev/null 2>&1 || true
+  elif command -v pkg >/dev/null 2>&1; then
+    pkg install -y amneziawg-tools >/dev/null 2>&1 || true
+    pkg install -y amneziawg >/dev/null 2>&1 || true
   fi
+
+  # Для контейнерных VPS (OpenVZ/LXC) модуль ядра часто недоступен.
+  # В таком случае используем userspace-установщик с очисткой неудачных следов.
   if ! command -v awg >/dev/null 2>&1 || ! command -v awg-quick >/dev/null 2>&1; then
-    local installer="/tmp/install_amneziawg.sh"
-    local installer_url='https://github.com/bivlked/amneziawg-installer/releases/download/v5.7.2/install_amneziawg.sh'
     local installer_port="${1:-51820}"
+    local installer='/tmp/install_amneziawg.sh'
+    local userspace_installer='/tmp/amneziawg-install.sh'
+    local userspace_url_1='https://raw.githubusercontent.com/wiresock/amneziawg-install/main/amneziawg-install.sh'
+    local userspace_url_2='https://raw.githubusercontent.com/wiresock/amneziawg-install/master/amneziawg-install.sh'
+    local userspace_client='vpconnect'
+    local installer_log='/tmp/amneziawg-installer.log'
+
     if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
       if command -v dnf >/dev/null 2>&1; then
         dnf -y install curl ca-certificates >/dev/null 2>&1 || true
@@ -66,19 +75,31 @@ ensure_amnezia_tools() {
         apt-get install -y -qq curl ca-certificates >/dev/null 2>&1 || true
       fi
     fi
-    if command -v curl >/dev/null 2>&1; then
-      curl -fsSL -o "$installer" "$installer_url" || true
-    elif command -v wget >/dev/null 2>&1; then
-      wget -qO "$installer" "$installer_url" || true
+
+    # Best effort uninstall прежнего инсталлятора, если уже лежит локально.
+    if [[ -x "$installer" ]]; then
+      bash "$installer" --uninstall >/tmp/amneziawg-uninstall.log 2>&1 || true
     fi
-    [[ -s "$installer" ]] || die "Не удалось скачать amneziawg-installer (${installer_url})"
-    chmod +x "$installer" || true
+
+    if command -v curl >/dev/null 2>&1; then
+      curl -fsSL -o "$userspace_installer" "$userspace_url_1"         || curl -fsSL -o "$userspace_installer" "$userspace_url_2"         || true
+    elif command -v wget >/dev/null 2>&1; then
+      wget -qO "$userspace_installer" "$userspace_url_1"         || wget -qO "$userspace_installer" "$userspace_url_2"         || true
+    fi
+
+    [[ -s "$userspace_installer" ]] || die "Не удалось скачать userspace installer AmneziaWG"
+    chmod +x "$userspace_installer" || true
     if command -v timeout >/dev/null 2>&1; then
-      timeout 900 bash -c "printf '%s\n' '$installer_port' | bash '$installer'" >/tmp/amneziawg-installer.log 2>&1 || true
+      timeout 900 bash -c "printf '%s
+%s
+' '$installer_port' '$userspace_client' | '$userspace_installer'" >"$installer_log" 2>&1 || true
     else
-      bash -c "printf '%s\n' '$installer_port' | bash '$installer'" >/tmp/amneziawg-installer.log 2>&1 || true
+      bash -c "printf '%s
+%s
+' '$installer_port' '$userspace_client' | '$userspace_installer'" >"$installer_log" 2>&1 || true
     fi
   fi
+
   command -v awg >/dev/null 2>&1 || die "Выбран amneziawg, но бинарник awg не установлен (см. /tmp/amneziawg-installer.log)"
   command -v awg-quick >/dev/null 2>&1 || die "Выбран amneziawg, но бинарник awg-quick не установлен (см. /tmp/amneziawg-installer.log)"
 }
