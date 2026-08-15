@@ -47,7 +47,7 @@
 | `03_getconfigure.sh` | Клон/обновление репозитория конфигурации |
 | `04_setsystemaccess.sh` | Доступ root/SSH/ключ и `firewalld` |
 | `05_setdomain.sh` | Установка `VPCONFIGURE_DOMAIN` |
-| `06_setwireguard.sh` | WireGuard (CentOS-реализация) |
+| `06_setvpservice.sh` | VPN service: WireGuard/AmneziaWG |
 | `07_setmtproxy.sh` | MTProxy (CentOS-реализация) |
 | `08_setvpmanage.sh` | VPManage (CentOS-реализация) |
 
