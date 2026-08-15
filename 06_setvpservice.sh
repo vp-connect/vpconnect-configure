@@ -165,22 +165,23 @@ ensure_amnezia_tools() {
     local installer="/tmp/install_amneziawg.sh"
     local installer_url='https://github.com/bivlked/amneziawg-installer/releases/download/v5.7.2/install_amneziawg.sh'
     local installer_port="${1:-51820}"
+    command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1 \
+      || apt-get install -y -qq curl ca-certificates >/dev/null 2>&1 || true
     if command -v curl >/dev/null 2>&1; then
-      curl -fsSL -o "$installer" "$installer_url" >/dev/null 2>&1 || true
+      curl -fsSL -o "$installer" "$installer_url" || true
     elif command -v wget >/dev/null 2>&1; then
-      wget -qO "$installer" "$installer_url" >/dev/null 2>&1 || true
+      wget -qO "$installer" "$installer_url" || true
     fi
-    if [[ -s "$installer" ]]; then
-      chmod +x "$installer" || true
-      if command -v timeout >/dev/null 2>&1; then
-        timeout 900 bash -c "printf '%s\n' '$installer_port' | bash '$installer'" >/tmp/amneziawg-installer.log 2>&1 || true
-      else
-        bash -c "printf '%s\n' '$installer_port' | bash '$installer'" >/tmp/amneziawg-installer.log 2>&1 || true
-      fi
+    [[ -s "$installer" ]] || die "Не удалось скачать amneziawg-installer (${installer_url})"
+    chmod +x "$installer" || true
+    if command -v timeout >/dev/null 2>&1; then
+      timeout 900 bash -c "printf '%s\n' '$installer_port' | bash '$installer'" >/tmp/amneziawg-installer.log 2>&1 || true
+    else
+      bash -c "printf '%s\n' '$installer_port' | bash '$installer'" >/tmp/amneziawg-installer.log 2>&1 || true
     fi
   fi
-  command -v awg >/dev/null 2>&1 || die "Выбран amneziawg, но бинарник awg не установлен"
-  command -v awg-quick >/dev/null 2>&1 || die "Выбран amneziawg, но бинарник awg-quick не установлен"
+  command -v awg >/dev/null 2>&1 || die "Выбран amneziawg, но бинарник awg не установлен (см. /tmp/amneziawg-installer.log)"
+  command -v awg-quick >/dev/null 2>&1 || die "Выбран amneziawg, но бинарник awg-quick не установлен (см. /tmp/amneziawg-installer.log)"
 }
 
 switch_to_awg_quick_unit() {
