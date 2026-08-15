@@ -76,7 +76,8 @@ switch_to_awg_quick_unit() {
   command -v systemctl >/dev/null 2>&1 || return 0
   local wg_unit="wg-quick@${iface}.service"
   local awg_unit="awg-quick@${iface}.service"
-  systemctl list-unit-files | grep -q '^awg-quick@\.service' || return 0
+  systemctl list-unit-files | grep -q '^awg-quick@\.service' \
+    || die "Выбран amneziawg, но systemd unit awg-quick@.service не найден"
   systemctl enable "$awg_unit" >/dev/null 2>&1 || die "Не удалось enable ${awg_unit}"
   systemctl restart "$awg_unit" >/dev/null 2>&1 || systemctl start "$awg_unit" >/dev/null 2>&1 || die "Не удалось запустить ${awg_unit}"
   systemctl stop "$wg_unit" >/dev/null 2>&1 || true
