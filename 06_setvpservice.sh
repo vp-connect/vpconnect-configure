@@ -106,7 +106,7 @@ merge_vp_into_env_file() {
   tmp="$(mktemp)"
   umask 077
   if [[ -f "$f" ]]; then
-    grep -vE '^export[[:space:]]+VPCONFIGURE_(VPSERVER_TYPE|VP_(PORT|CLIENT_CERT_PATH|CLIENT_CONFIG_PATH|SERVER_PUBLIC_KEY_PATH|PRIVATE_KEY_PATH|WAN_IFACE)|VPSERVER_(INTERFACE_NAME|NETWORK_CIDR))=|^# VPCONFIGURE_VP \(06_setvpservice' "$f" >"$tmp" || true
+    grep -vE '^export[[:space:]]+VPCONFIGURE_(VPSERVER_TYPE|VP_(PORT|CLIENT_CERT_PATH|CLIENT_CONFIG_PATH|SERVER_PUBLIC_KEY_PATH|PRIVATE_KEY_PATH|WAN_IFACE|SERVICE_BINARY|SERVICE_QUICK_BINARY)|VPSERVER_(INTERFACE_NAME|NETWORK_CIDR))=|^# VPCONFIGURE_VP \(06_setvpservice' "$f" >"$tmp" || true
   else
     : >"$tmp"
   fi
@@ -136,6 +136,45 @@ emit_vp_exports() {
   if [[ -n "${9:-}" ]]; then
     printf 'export VPCONFIGURE_VP_WAN_IFACE=%q\n' "${9}"
   fi
+  printf 'export VPCONFIGURE_VP_SERVICE_BINARY=%q\n' "${10:-}"
+  printf 'export VPCONFIGURE_VP_SERVICE_QUICK_BINARY=%q\n' "${11:-}"
+}
+
+detect_vp_binaries() {
+  local svc=$1
+  local vp_bin='wg'
+  local vp_quick_bin='wg-quick'
+  if [[ "$svc" == "amneziawg" ]]; then
+    vp_bin='awg'
+    vp_quick_bin='awg-quick'
+  fi
+  printf '%s;%s\n' "$vp_bin" "$vp_quick_bin"
+}
+
+ensure_amnezia_tools() {
+  command -v awg >/dev/null 2>&1 && command -v awg-quick >/dev/null 2>&1 && return 0
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq || true
+  apt-get install -y -qq amneziawg-tools >/dev/null 2>&1 || true
+  if ! command -v awg >/dev/null 2>&1 || ! command -v awg-quick >/dev/null 2>&1; then
+    apt-get install -y -qq amneziawg >/dev/null 2>&1 || true
+  fi
+  command -v awg >/dev/null 2>&1 || die "Выбран amneziawg, но бинарник awg не установлен"
+  command -v awg-quick >/dev/null 2>&1 || die "Выбран amneziawg, но бинарник awg-quick не установлен"
+}
+
+switch_to_awg_quick_unit() {
+  local iface=$1
+  command -v systemctl >/dev/null 2>&1 || return 0
+  local wg_unit="wg-quick@${iface}.service"
+  local awg_unit="awg-quick@${iface}.service"
+  systemctl list-unit-files | grep -q '^awg-quick@\.service' \
+    || die "Выбран amneziawg, но systemd unit awg-quick@.service не найден"
+  systemctl enable "$awg_unit" >/dev/null 2>&1 || die "Не удалось enable ${awg_unit}"
+  systemctl restart "$awg_unit" >/dev/null 2>&1 || systemctl start "$awg_unit" >/dev/null 2>&1 \
+    || die "Не удалось запустить ${awg_unit}"
+  systemctl stop "$wg_unit" >/dev/null 2>&1 || true
+  systemctl disable "$wg_unit" >/dev/null 2>&1 || true
 }
 
 main() {
@@ -222,6 +261,9 @@ main() {
   vp_cert="$(expand_tilde "$vp_cert")"
   vp_conf="$(expand_tilde "$vp_conf")"
   persist_file="$(expand_tilde "$persist_file")"
+  if [[ "$vpservice_type" == "amneziawg" ]]; then
+    ensure_amnezia_tools
+  fi
 
   # В текущем шаге используем существующий установщик WG как базу
   # (для amneziawg серверная часть сейчас разворачивается по совместимому пути).
@@ -279,6 +321,13 @@ main() {
   else
     unset VPCONFIGURE_VP_WAN_IFACE 2>/dev/null || true
   fi
+  local vp_bin_pair
+  vp_bin_pair="$(detect_vp_binaries "$vpservice_type")"
+  export VPCONFIGURE_VP_SERVICE_BINARY="${vp_bin_pair%%;*}"
+  export VPCONFIGURE_VP_SERVICE_QUICK_BINARY="${vp_bin_pair#*;}"
+  if [[ "$vpservice_type" == "amneziawg" ]]; then
+    switch_to_awg_quick_unit "$VPCONFIGURE_VPSERVER_INTERFACE_NAME"
+  fi
 
   local -a vp_kv=(
     VPCONFIGURE_VPSERVER_TYPE "$VPCONFIGURE_VPSERVER_TYPE"
@@ -289,6 +338,8 @@ main() {
     VPCONFIGURE_VP_PRIVATE_KEY_PATH "$VPCONFIGURE_VP_PRIVATE_KEY_PATH"
     VPCONFIGURE_VPSERVER_INTERFACE_NAME "$VPCONFIGURE_VPSERVER_INTERFACE_NAME"
     VPCONFIGURE_VPSERVER_NETWORK_CIDR "$VPCONFIGURE_VPSERVER_NETWORK_CIDR"
+    VPCONFIGURE_VP_SERVICE_BINARY "$VPCONFIGURE_VP_SERVICE_BINARY"
+    VPCONFIGURE_VP_SERVICE_QUICK_BINARY "$VPCONFIGURE_VP_SERVICE_QUICK_BINARY"
   )
   if [[ -n "${VPCONFIGURE_VP_WAN_IFACE:-}" ]]; then
     vp_kv+=( VPCONFIGURE_VP_WAN_IFACE "$VPCONFIGURE_VP_WAN_IFACE" )
@@ -299,6 +350,8 @@ main() {
     "vpservice_type:${vpservice_type}" \
     "vp_interface:${VPCONFIGURE_VPSERVER_INTERFACE_NAME}" \
     "vp_port:${VPCONFIGURE_VP_PORT}" \
+    "vp_service_binary:${VPCONFIGURE_VP_SERVICE_BINARY}" \
+    "vp_service_quick_binary:${VPCONFIGURE_VP_SERVICE_QUICK_BINARY}" \
     "vp_server_public_key_path:${VPCONFIGURE_VP_SERVER_PUBLIC_KEY_PATH}" \
     "vp_private_key_path:${VPCONFIGURE_VP_PRIVATE_KEY_PATH}" \
     "vp_client_cert_path:${VPCONFIGURE_VP_CLIENT_CERT_PATH}" \
@@ -314,7 +367,9 @@ main() {
       "$VPCONFIGURE_VP_PRIVATE_KEY_PATH" \
       "$VPCONFIGURE_VPSERVER_INTERFACE_NAME" \
       "$VPCONFIGURE_VPSERVER_NETWORK_CIDR" \
-      "${VPCONFIGURE_VP_WAN_IFACE:-}"
+      "${VPCONFIGURE_VP_WAN_IFACE:-}" \
+      "$VPCONFIGURE_VP_SERVICE_BINARY" \
+      "$VPCONFIGURE_VP_SERVICE_QUICK_BINARY"
   fi
 }
 
