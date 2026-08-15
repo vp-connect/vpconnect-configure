@@ -24,6 +24,7 @@ DEFAULT_VPSERVER_TYPE='wireguard'
 DEFAULT_CERT='/usr/vpserver/client_cert'
 DEFAULT_CONF_DIR='/usr/vpserver/client_config'
 DEFAULT_PERSIST_FILE='/root/.vpconnect-configure.env'
+AMNEZIA_APT_KEY_FPR='75C9DD72C799870E310542E24166F2C257290828'
 
 _SELF_DIR=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")")" && pwd)
 _WG_SCRIPT="${_SELF_DIR}/06_setwireguard.sh"
@@ -151,76 +152,222 @@ detect_vp_binaries() {
   printf '%s;%s\n' "$vp_bin" "$vp_quick_bin"
 }
 
-ensure_amnezia_tools() {
-  command -v awg >/dev/null 2>&1 && command -v awg-quick >/dev/null 2>&1 && return 0
-
+ensure_curl_or_wget() {
+  command -v curl >/dev/null 2>&1 && return 0
+  command -v wget >/dev/null 2>&1 && return 0
   if command -v dnf >/dev/null 2>&1; then
-    dnf -y install amneziawg-tools >/dev/null 2>&1 || true
-    dnf -y install amneziawg >/dev/null 2>&1 || true
+    dnf -y install curl ca-certificates >/dev/null 2>&1 || true
   elif command -v yum >/dev/null 2>&1; then
-    yum -y install amneziawg-tools >/dev/null 2>&1 || true
-    yum -y install amneziawg >/dev/null 2>&1 || true
+    yum -y install curl ca-certificates >/dev/null 2>&1 || true
+  elif command -v pkg >/dev/null 2>&1; then
+    pkg install -y curl ca_root_nss >/dev/null 2>&1 || true
   elif command -v apt-get >/dev/null 2>&1; then
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq || true
-    apt-get install -y -qq amneziawg-tools >/dev/null 2>&1 || true
-    apt-get install -y -qq amneziawg >/dev/null 2>&1 || true
-  elif command -v pkg >/dev/null 2>&1; then
-    pkg install -y amneziawg-tools >/dev/null 2>&1 || true
-    pkg install -y amneziawg >/dev/null 2>&1 || true
+    apt-get install -y -qq curl ca-certificates gnupg >/dev/null 2>&1 || true
+  fi
+}
+
+# Amnezia PPA (focal) публикует amneziawg / amneziawg-tools для Debian/Ubuntu.
+ensure_amnezia_apt_repo() {
+  command -v apt-get >/dev/null 2>&1 || return 1
+  export DEBIAN_FRONTEND=noninteractive
+  mkdir -p /etc/apt/keyrings /etc/apt/sources.list.d
+  apt-get install -y -qq curl ca-certificates gnupg >/dev/null 2>&1 || true
+  ensure_curl_or_wget
+
+  if [[ ! -s /etc/apt/keyrings/amneziawg.gpg ]]; then
+    local tmp_asc tmp_keyring fpr
+    tmp_asc="$(mktemp /tmp/amneziawg-apt-key.XXXXXX)"
+    tmp_keyring="$(mktemp /etc/apt/keyrings/amneziawg.gpg.tmp.XXXXXX)"
+    if command -v curl >/dev/null 2>&1; then
+      curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${AMNEZIA_APT_KEY_FPR}" -o "$tmp_asc" || true
+    else
+      wget -qO "$tmp_asc" "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${AMNEZIA_APT_KEY_FPR}" || true
+    fi
+    if [[ ! -s "$tmp_asc" ]] || ! gpg --dearmor <"$tmp_asc" >"$tmp_keyring" 2>/dev/null; then
+      rm -f "$tmp_asc" "$tmp_keyring"
+      return 1
+    fi
+    fpr="$(gpg --show-keys --with-colons "$tmp_keyring" 2>/dev/null | awk -F: '/^fpr:/{print $10; exit}')"
+    if [[ "${fpr}" != "${AMNEZIA_APT_KEY_FPR}" ]]; then
+      rm -f "$tmp_asc" "$tmp_keyring"
+      return 1
+    fi
+    chmod 644 "$tmp_keyring"
+    mv -f "$tmp_keyring" /etc/apt/keyrings/amneziawg.gpg
+    rm -f "$tmp_asc"
   fi
 
-  # Для контейнерных VPS (OpenVZ/LXC) модуль ядра часто недоступен.
-  # В таком случае используем userspace-установщик с очисткой неудачных следов.
-  if ! command -v awg >/dev/null 2>&1 || ! command -v awg-quick >/dev/null 2>&1; then
-    local installer_port="${1:-51820}"
-    local installer='/tmp/install_amneziawg.sh'
-    local userspace_installer='/tmp/amneziawg-install.sh'
-    local userspace_url_1='https://raw.githubusercontent.com/wiresock/amneziawg-install/main/amneziawg-install.sh'
-    local userspace_url_2='https://raw.githubusercontent.com/wiresock/amneziawg-install/master/amneziawg-install.sh'
-    local userspace_client='vpconnect'
-    local installer_log='/tmp/amneziawg-installer.log'
+  cat >/etc/apt/sources.list.d/amneziawg.sources.list <<'EOF'
+# Managed by vpconnect-configure 06_setvpservice.sh
+deb [signed-by=/etc/apt/keyrings/amneziawg.gpg] https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu focal main
+deb-src [signed-by=/etc/apt/keyrings/amneziawg.gpg] https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu focal main
+EOF
+  apt-get update -qq || true
+}
 
-    if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
-      if command -v dnf >/dev/null 2>&1; then
-        dnf -y install curl ca-certificates >/dev/null 2>&1 || true
-      elif command -v yum >/dev/null 2>&1; then
-        yum -y install curl ca-certificates >/dev/null 2>&1 || true
-      elif command -v pkg >/dev/null 2>&1; then
-        pkg install -y curl ca_root_nss >/dev/null 2>&1 || true
-      elif command -v apt-get >/dev/null 2>&1; then
-        export DEBIAN_FRONTEND=noninteractive
-        apt-get update -qq || true
-        apt-get install -y -qq curl ca-certificates >/dev/null 2>&1 || true
-      fi
+amnezia_module_loaded() {
+  # Нельзя lsmod|grep -q при set -o pipefail: SIGPIPE у lsmod даёт ложный fail.
+  grep -q '^amneziawg ' </proc/modules 2>/dev/null
+}
+
+ensure_amnezia_kernel_module() {
+  command -v modprobe >/dev/null 2>&1 || return 0
+  amnezia_module_loaded && return 0
+  if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    local kr
+    kr="$(uname -r)"
+    apt-get install -y -qq "linux-headers-${kr}" >/dev/null 2>&1 \
+      || apt-get install -y -qq linux-headers-amd64 linux-image-amd64 dkms >/dev/null 2>&1 \
+      || true
+    if command -v dkms >/dev/null 2>&1; then
+      dkms autoinstall >/tmp/amneziawg-dkms.log 2>&1 || true
+      depmod -a >/dev/null 2>&1 || true
     fi
+  fi
+  modprobe amneziawg >/tmp/amneziawg-modprobe.log 2>&1 || true
+  amnezia_module_loaded && return 0
+  printf '%s\n' \
+    "Предупреждение: модуль amneziawg не загружен для ядра $(uname -r)." \
+    "Если apt поставил более новый linux-image — перезагрузите сервер и повторите шаг 06." \
+    >&2
+  return 0
+}
 
-    # Best effort uninstall прежнего инсталлятора, если уже лежит локально.
+generate_amnezia_obfuscation_block() {
+  # Диапазоны совместимы с AmneziaWG / wiresock installer.
+  local jc jmin jmax s1 s2 s3 s4
+  local h1_min h1_max h2_min h2_max h3_min h3_max h4_min h4_max
+  jc="$(shuf -i1-128 -n1 2>/dev/null || echo 9)"
+  jmin=50
+  jmax=1000
+  s1="$(shuf -i15-150 -n1 2>/dev/null || echo 50)"
+  s2="$(shuf -i15-150 -n1 2>/dev/null || echo 60)"
+  s3="$(shuf -i15-150 -n1 2>/dev/null || echo 70)"
+  s4="$(shuf -i15-150 -n1 2>/dev/null || echo 80)"
+  h1_min="$(shuf -i100000000-900000000 -n1 2>/dev/null || echo 200000000)"
+  h1_max=$((h1_min + 100000000 - 1))
+  h2_min=$((h1_max + 100000))
+  h2_max=$((h2_min + 100000000 - 1))
+  h3_min=$((h2_max + 100000))
+  h3_max=$((h3_min + 100000000 - 1))
+  h4_min=$((h3_max + 100000))
+  h4_max=$((h4_min + 100000000 - 1))
+  cat <<EOF
+Jc = ${jc}
+Jmin = ${jmin}
+Jmax = ${jmax}
+S1 = ${s1}
+S2 = ${s2}
+S3 = ${s3}
+S4 = ${s4}
+H1 = ${h1_min}-${h1_max}
+H2 = ${h2_min}-${h2_max}
+H3 = ${h3_min}-${h3_max}
+H4 = ${h4_min}-${h4_max}
+EOF
+}
+
+# awg-quick читает /etc/amnezia/amneziawg/<iface>.conf (не /etc/wireguard).
+publish_amnezia_iface_conf() {
+  local iface=$1
+  local src="/etc/wireguard/${iface}.conf"
+  local dst_dir="/etc/amnezia/amneziawg"
+  local dst="${dst_dir}/${iface}.conf"
+  [[ -s "$src" ]] || die "Нет конфига WireGuard для переноса в AmneziaWG: ${src}"
+  mkdir -p -- "$dst_dir"
+  chmod 700 -- "$dst_dir" 2>/dev/null || true
+  local tmp obfuscation
+  tmp="$(mktemp)"
+  obfuscation="$(generate_amnezia_obfuscation_block)"
+  awk -v obf="$obfuscation" '
+    BEGIN { inserted=0 }
+    {
+      print
+      if (!inserted && $0 ~ /^PrivateKey[[:space:]]*=/) {
+        n = split(obf, lines, "\n")
+        for (i = 1; i <= n; i++) if (lines[i] != "") print lines[i]
+        inserted=1
+      }
+    }
+    END {
+      if (!inserted) exit 2
+    }
+  ' "$src" >"$tmp" || {
+    rm -f "$tmp"
+    die "Не удалось добавить параметры обфускации AmneziaWG в ${dst}"
+  }
+  umask 077
+  mv -f -- "$tmp" "$dst"
+  chmod 600 -- "$dst"
+}
+
+ensure_amnezia_tools() {
+  local installer_port="${1:-51820}"
+  local installer_log='/tmp/amneziawg-installer.log'
+
+  if command -v awg >/dev/null 2>&1 && command -v awg-quick >/dev/null 2>&1; then
+    ensure_amnezia_kernel_module
+    return 0
+  fi
+
+  if command -v apt-get >/dev/null 2>&1; then
+    ensure_amnezia_apt_repo || true
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get install -y -qq dkms iptables qrencode amneziawg-tools amneziawg >/tmp/amneziawg-apt.log 2>&1 || true
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf -y install amneziawg-tools amneziawg >/dev/null 2>&1 || true
+  elif command -v yum >/dev/null 2>&1; then
+    yum -y install amneziawg-tools amneziawg >/dev/null 2>&1 || true
+  elif command -v pkg >/dev/null 2>&1; then
+    pkg install -y amneziawg-tools amneziawg >/dev/null 2>&1 || true
+  fi
+
+  # Fallback: wiresock installer в non-interactive режиме (без stdin-prompts).
+  if ! command -v awg >/dev/null 2>&1 || ! command -v awg-quick >/dev/null 2>&1; then
+    local installer='/tmp/install_amneziawg.sh'
+    local awg_installer='/tmp/amneziawg-install.sh'
+    local url_1='https://raw.githubusercontent.com/wiresock/amneziawg-install/main/amneziawg-install.sh'
+    local url_2='https://raw.githubusercontent.com/wiresock/amneziawg-install/master/amneziawg-install.sh'
+
+    ensure_curl_or_wget
     if [[ -x "$installer" ]]; then
       bash "$installer" --uninstall >/tmp/amneziawg-uninstall.log 2>&1 || true
     fi
-
     if command -v curl >/dev/null 2>&1; then
-      curl -fsSL -o "$userspace_installer" "$userspace_url_1"         || curl -fsSL -o "$userspace_installer" "$userspace_url_2"         || true
+      curl -fsSL -o "$awg_installer" "$url_1" || curl -fsSL -o "$awg_installer" "$url_2" || true
     elif command -v wget >/dev/null 2>&1; then
-      wget -qO "$userspace_installer" "$userspace_url_1"         || wget -qO "$userspace_installer" "$userspace_url_2"         || true
+      wget -qO "$awg_installer" "$url_1" || wget -qO "$awg_installer" "$url_2" || true
     fi
-
-    [[ -s "$userspace_installer" ]] || die "Не удалось скачать userspace installer AmneziaWG"
-    chmod +x "$userspace_installer" || true
+    [[ -s "$awg_installer" ]] || die "Не удалось скачать AmneziaWG installer"
+    chmod +x "$awg_installer" || true
+    # AUTO_INSTALL=y обязателен: иначе скрипт зависает на read -rp.
     if command -v timeout >/dev/null 2>&1; then
-      timeout 900 bash -c "printf '%s
-%s
-' '$installer_port' '$userspace_client' | '$userspace_installer'" >"$installer_log" 2>&1 || true
+      timeout 900 env AUTO_INSTALL=y \
+        "SERVER_PORT=${installer_port}" \
+        ENABLE_IPV6=n \
+        CREATE_INITIAL_CLIENT=no \
+        "$awg_installer" >"$installer_log" 2>&1 || true
     else
-      bash -c "printf '%s
-%s
-' '$installer_port' '$userspace_client' | '$userspace_installer'" >"$installer_log" 2>&1 || true
+      env AUTO_INSTALL=y \
+        "SERVER_PORT=${installer_port}" \
+        ENABLE_IPV6=n \
+        CREATE_INITIAL_CLIENT=no \
+        "$awg_installer" >"$installer_log" 2>&1 || true
     fi
   fi
 
-  command -v awg >/dev/null 2>&1 || die "Выбран amneziawg, но бинарник awg не установлен (см. /tmp/amneziawg-installer.log)"
-  command -v awg-quick >/dev/null 2>&1 || die "Выбран amneziawg, но бинарник awg-quick не установлен (см. /tmp/amneziawg-installer.log)"
+  command -v awg >/dev/null 2>&1 || die "Выбран amneziawg, но бинарник awg не установлен (см. ${installer_log} и /tmp/amneziawg-apt.log)"
+  command -v awg-quick >/dev/null 2>&1 || die "Выбран amneziawg, но бинарник awg-quick не установлен (см. ${installer_log} и /tmp/amneziawg-apt.log)"
+  ensure_amnezia_kernel_module
+}
+
+awg_quick_unit_available() {
+  [[ -f /usr/lib/systemd/system/awg-quick@.service || -f /lib/systemd/system/awg-quick@.service ]] \
+    && return 0
+  systemctl cat 'awg-quick@.service' >/dev/null 2>&1
 }
 
 switch_to_awg_quick_unit() {
@@ -228,13 +375,36 @@ switch_to_awg_quick_unit() {
   command -v systemctl >/dev/null 2>&1 || return 0
   local wg_unit="wg-quick@${iface}.service"
   local awg_unit="awg-quick@${iface}.service"
-  systemctl list-unit-files | grep -q '^awg-quick@\.service' \
+
+  publish_amnezia_iface_conf "$iface"
+  awg_quick_unit_available \
     || die "Выбран amneziawg, но systemd unit awg-quick@.service не найден"
-  systemctl enable "$awg_unit" >/dev/null 2>&1 || die "Не удалось enable ${awg_unit}"
-  systemctl restart "$awg_unit" >/dev/null 2>&1 || systemctl start "$awg_unit" >/dev/null 2>&1 \
-    || die "Не удалось запустить ${awg_unit}"
+
+  # Сначала освобождаем интерфейс у wg-quick (иначе awg-quick: already exists).
   systemctl stop "$wg_unit" >/dev/null 2>&1 || true
   systemctl disable "$wg_unit" >/dev/null 2>&1 || true
+  if command -v wg-quick >/dev/null 2>&1; then
+    wg-quick down "$iface" >/dev/null 2>&1 || true
+  fi
+  ip link delete "$iface" >/dev/null 2>&1 || true
+  # Легаси awg0 от полного wiresock-installer не должен держать порт.
+  systemctl stop 'awg-quick@awg0.service' >/dev/null 2>&1 || true
+  ip link delete awg0 >/dev/null 2>&1 || true
+
+  ensure_amnezia_kernel_module
+  systemctl enable "$awg_unit" >/dev/null 2>&1 || die "Не удалось enable ${awg_unit}"
+  local awg_err=''
+  if ! awg_err=$(systemctl restart "$awg_unit" 2>&1); then
+    if ! awg_err=$(systemctl start "$awg_unit" 2>&1); then
+      printf '%s\n' "Ошибка! Не удалось запустить ${awg_unit}" >&2
+      printf '%s\n' "systemctl: ${awg_err}" >&2
+      systemctl status "$awg_unit" --no-pager -l >&2 || true
+      journalctl -u "$awg_unit" -n 80 --no-pager >&2 || true
+      die "Не удалось запустить ${awg_unit}"
+    fi
+  fi
+  systemctl is-active --quiet "$awg_unit" 2>/dev/null \
+    || die "Не удалось запустить ${awg_unit} (не active)"
 }
 
 main() {
@@ -434,4 +604,3 @@ main() {
 }
 
 main "$@"
-
