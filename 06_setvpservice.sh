@@ -159,6 +159,26 @@ ensure_amnezia_tools() {
   if ! command -v awg >/dev/null 2>&1 || ! command -v awg-quick >/dev/null 2>&1; then
     apt-get install -y -qq amneziawg >/dev/null 2>&1 || true
   fi
+  # Fallback: рекомендованный установщик AmneziaWG (без docker).
+  # Скрипт может быть интерактивным, поэтому подаём порт через stdin.
+  if ! command -v awg >/dev/null 2>&1 || ! command -v awg-quick >/dev/null 2>&1; then
+    local installer="/tmp/install_amneziawg.sh"
+    local installer_url='https://github.com/bivlked/amneziawg-installer/releases/download/v5.7.2/install_amneziawg.sh'
+    local installer_port="${1:-51820}"
+    if command -v curl >/dev/null 2>&1; then
+      curl -fsSL -o "$installer" "$installer_url" >/dev/null 2>&1 || true
+    elif command -v wget >/dev/null 2>&1; then
+      wget -qO "$installer" "$installer_url" >/dev/null 2>&1 || true
+    fi
+    if [[ -s "$installer" ]]; then
+      chmod +x "$installer" || true
+      if command -v timeout >/dev/null 2>&1; then
+        timeout 900 bash -c "printf '%s\n' '$installer_port' | bash '$installer'" >/tmp/amneziawg-installer.log 2>&1 || true
+      else
+        bash -c "printf '%s\n' '$installer_port' | bash '$installer'" >/tmp/amneziawg-installer.log 2>&1 || true
+      fi
+    fi
+  fi
   command -v awg >/dev/null 2>&1 || die "Выбран amneziawg, но бинарник awg не установлен"
   command -v awg-quick >/dev/null 2>&1 || die "Выбран amneziawg, но бинарник awg-quick не установлен"
 }
@@ -168,8 +188,10 @@ switch_to_awg_quick_unit() {
   command -v systemctl >/dev/null 2>&1 || return 0
   local wg_unit="wg-quick@${iface}.service"
   local awg_unit="awg-quick@${iface}.service"
-  systemctl list-unit-files | grep -q '^awg-quick@\.service' \
-    || die "Выбран amneziawg, но systemd unit awg-quick@.service не найден"
+  systemctl list-unit-files | grep -q '^awg-quick@\.service' || {
+    printf '%s\n' "awg-quick@.service не найден, оставляю текущий wg-quick unit как fallback." >&2
+    return 0
+  }
   systemctl enable "$awg_unit" >/dev/null 2>&1 || die "Не удалось enable ${awg_unit}"
   systemctl restart "$awg_unit" >/dev/null 2>&1 || systemctl start "$awg_unit" >/dev/null 2>&1 \
     || die "Не удалось запустить ${awg_unit}"
@@ -262,7 +284,7 @@ main() {
   vp_conf="$(expand_tilde "$vp_conf")"
   persist_file="$(expand_tilde "$persist_file")"
   if [[ "$vpservice_type" == "amneziawg" ]]; then
-    ensure_amnezia_tools
+    ensure_amnezia_tools "${vp_port:-51820}"
   fi
 
   # В текущем шаге используем существующий установщик WG как базу
