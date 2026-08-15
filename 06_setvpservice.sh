@@ -49,6 +49,24 @@ ensure_amnezia_tools() {
     apt-get install -y -qq amneziawg-tools >/dev/null 2>&1 || true
     apt-get install -y -qq amneziawg >/dev/null 2>&1 || true
   fi
+  if ! command -v awg >/dev/null 2>&1 || ! command -v awg-quick >/dev/null 2>&1; then
+    local installer="/tmp/install_amneziawg.sh"
+    local installer_url='https://github.com/bivlked/amneziawg-installer/releases/download/v5.7.2/install_amneziawg.sh'
+    local installer_port="${1:-51820}"
+    if command -v curl >/dev/null 2>&1; then
+      curl -fsSL -o "$installer" "$installer_url" >/dev/null 2>&1 || true
+    elif command -v wget >/dev/null 2>&1; then
+      wget -qO "$installer" "$installer_url" >/dev/null 2>&1 || true
+    fi
+    if [[ -s "$installer" ]]; then
+      chmod +x "$installer" || true
+      if command -v timeout >/dev/null 2>&1; then
+        timeout 900 bash -c "printf '%s\n' '$installer_port' | bash '$installer'" >/tmp/amneziawg-installer.log 2>&1 || true
+      else
+        bash -c "printf '%s\n' '$installer_port' | bash '$installer'" >/tmp/amneziawg-installer.log 2>&1 || true
+      fi
+    fi
+  fi
   command -v awg >/dev/null 2>&1 || die "Выбран amneziawg, но бинарник awg не установлен"
   command -v awg-quick >/dev/null 2>&1 || die "Выбран amneziawg, но бинарник awg-quick не установлен"
 }
@@ -88,7 +106,7 @@ done
 vpservice_type="$(printf '%s' "$vpservice_type" | tr '[:upper:]' '[:lower:]')"
 [[ "$vpservice_type" == "wireguard" || "$vpservice_type" == "amneziawg" ]] || die "Некорректный --vpservice-type"
 if [[ "$vpservice_type" == "amneziawg" ]]; then
-  ensure_amnezia_tools
+  ensure_amnezia_tools "${vp_port:-51820}"
 fi
 
 _self_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
