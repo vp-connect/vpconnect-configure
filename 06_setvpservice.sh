@@ -23,7 +23,7 @@ mode_export=0
 
 while [[ $# -gt 0 ]]; do
   case "${1:-}" in
-    --vpservice-type) vpservice_type="$2"; shift 2 ;;
+    --vpservice-type|--vp-service) vpservice_type="$2"; shift 2 ;;
     --vp-port) vp_port="$2"; shift 2 ;;
     --vp-address) vp_address="$2"; shift 2 ;;
     --vp-wan-interface) vp_wan_iface="$2"; shift 2 ;;
@@ -34,7 +34,7 @@ while [[ $# -gt 0 ]]; do
     --export) mode_export=1; shift ;;
     -h|--help)
       printf 'result:success; message:Справка выведена в stderr\n'
-      printf '%s\n' "06_setvpservice.sh --vpservice-type wireguard|amneziawg --vp-port N --vp-client-cert-path PATH --vp-client-config-path PATH" >&2
+      printf '%s\n' "06_setvpservice.sh --vpservice-type|--vp-service wireguard|amneziawg --vp-port N --vp-client-cert-path PATH --vp-client-config-path PATH" >&2
       exit 0
       ;;
     *) die "Неизвестный аргумент: $1" ;;

@@ -305,6 +305,10 @@ run_centos() {
   wg_pub_host="${VPCONFIGURE_WIREGUARD_PUBLIC_HOST:-${VPCONFIGURE_DOMAIN}}"
   wg_listen_port="${VPCONFIGURE_WIREGUARD_LISTEN_PORT:-${VPCONFIGURE_VP_PORT:-${VPCONFIGURE_WG_PORT:-0}}}"
   wg_dns="${VPCONFIGURE_WIREGUARD_DNS:-8.8.8.8}"
+  vp_service_type="$(printf '%s' "${VPCONFIGURE_VPSERVER_TYPE:-wireguard}" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$vp_service_type" != "wireguard" && "$vp_service_type" != "amneziawg" ]]; then
+    vp_service_type="wireguard"
+  fi
 
   if [[ -z "$wg_network_cidr" && -n "$wg_conf_path" && -f "$wg_conf_path" ]]; then
     local _addr
@@ -431,6 +435,13 @@ ADMIN_DEFAULT_PASSWORD=${app_pw}
 # Блокировка входа после неверных попыток с одного IP.
 LOGIN_MAX_FAILED_ATTEMPTS=${login_max}
 LOGIN_LOCKOUT_MINUTES=${login_lock}
+
+# --- WireGuard (пустой WIREGUARD_CONF_PATH = интеграция выключена, секция клиентов в UI скрыта) ---
+# Тип активного VPN-сервиса: wireguard|amneziawg.
+VP_SERVICE_TYPE=${vp_service_type}
+# Необязательные override бинарников (пусто = автоподбор по VP_SERVICE_TYPE внутри vpconnect-manage).
+VP_SERVICE_BINARY=${VPCONFIGURE_VP_SERVICE_BINARY:-}
+VP_SERVICE_QUICK_BINARY=${VPCONFIGURE_VP_SERVICE_QUICK_BINARY:-}
 
 # --- WireGuard (пустой WIREGUARD_CONF_PATH = интеграция выключена, секция клиентов в UI скрыта) ---
 # По умолчанию /etc/wireguard/<WIREGUARD_INTERFACE_NAME>.conf; если VPCONFIGURE_WIREGUARD_INTERFACE_NAME пуст — имя как detect_wg_interface_name (wg/detect_wg_iface.inc.sh). Чтобы выключить UI: export VPCONFIGURE_WG_CONF_PATH= перед запуском 08.
