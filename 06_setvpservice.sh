@@ -107,7 +107,7 @@ merge_vp_into_env_file() {
   tmp="$(mktemp)"
   umask 077
   if [[ -f "$f" ]]; then
-    grep -vE '^export[[:space:]]+VPCONFIGURE_(VPSERVER_TYPE|VP_(PORT|CLIENT_CERT_PATH|CLIENT_CONFIG_PATH|SERVER_PUBLIC_KEY_PATH|PRIVATE_KEY_PATH|WAN_IFACE|SERVICE_BINARY|SERVICE_QUICK_BINARY)|VPSERVER_(INTERFACE_NAME|NETWORK_CIDR))=|^# VPCONFIGURE_VP \(06_setvpservice' "$f" >"$tmp" || true
+    grep -vE '^export[[:space:]]+VPCONFIGURE_(VPSERVER_TYPE|VP_(PORT|CLIENT_CERT_PATH|CLIENT_CONFIG_PATH|SERVER_PUBLIC_KEY_PATH|PRIVATE_KEY_PATH|WAN_IFACE|SERVICE_BINARY|SERVICE_QUICK_BINARY|CONF_PATH)|VPSERVER_(INTERFACE_NAME|NETWORK_CIDR))=|^# VPCONFIGURE_VP \(06_setvpservice' "$f" >"$tmp" || true
   else
     : >"$tmp"
   fi
@@ -213,25 +213,50 @@ amnezia_module_loaded() {
 }
 
 ensure_amnezia_kernel_module() {
-  command -v modprobe >/dev/null 2>&1 || return 0
+  # $1 = strict (1 — die, если модуль не загрузился). Для обычных KVM/bare-metal ядер.
+  local strict=${1:-0}
+  command -v modprobe >/dev/null 2>&1 || {
+    [[ "$strict" -eq 1 ]] && die "modprobe недоступен — amneziawg kernel module не может быть загружен"
+    return 0
+  }
   amnezia_module_loaded && return 0
+  local kr
+  kr="$(uname -r)"
   if command -v apt-get >/dev/null 2>&1; then
     export DEBIAN_FRONTEND=noninteractive
-    local kr
-    kr="$(uname -r)"
-    apt-get install -y -qq "linux-headers-${kr}" >/dev/null 2>&1 \
-      || apt-get install -y -qq linux-headers-amd64 linux-image-amd64 dkms >/dev/null 2>&1 \
-      || true
-    if command -v dkms >/dev/null 2>&1; then
-      dkms autoinstall >/tmp/amneziawg-dkms.log 2>&1 || true
-      depmod -a >/dev/null 2>&1 || true
+    # Сначала headers именно текущего ядра (нормальный путь без reboot).
+    if ! apt-get install -y -qq "linux-headers-${kr}" >/tmp/amneziawg-headers.log 2>&1; then
+      # Fallback: meta-пакеты (могут поставить более новое ядро — тогда нужен reboot).
+      apt-get install -y -qq linux-headers-amd64 linux-image-amd64 dkms >/tmp/amneziawg-headers.log 2>&1 || true
     fi
+    if command -v dkms >/dev/null 2>&1; then
+      dkms autoinstall -k "$kr" >/tmp/amneziawg-dkms.log 2>&1 \
+        || dkms autoinstall >/tmp/amneziawg-dkms.log 2>&1 \
+        || true
+      depmod -a "$kr" >/dev/null 2>&1 || depmod -a >/dev/null 2>&1 || true
+    fi
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf -y install "kernel-devel-${kr}" kernel-devel dkms >/tmp/amneziawg-headers.log 2>&1 || true
+    dkms autoinstall >/tmp/amneziawg-dkms.log 2>&1 || true
+    depmod -a >/dev/null 2>&1 || true
+  elif command -v yum >/dev/null 2>&1; then
+    yum -y install "kernel-devel-${kr}" kernel-devel dkms >/tmp/amneziawg-headers.log 2>&1 || true
+    dkms autoinstall >/tmp/amneziawg-dkms.log 2>&1 || true
+    depmod -a >/dev/null 2>&1 || true
   fi
   modprobe amneziawg >/tmp/amneziawg-modprobe.log 2>&1 || true
   amnezia_module_loaded && return 0
+
+  local other_ko=''
+  other_ko="$(find /lib/modules -name 'amneziawg.ko*' 2>/dev/null | head -n 1 || true)"
+  if [[ -n "$other_ko" && "$other_ko" != *"/lib/modules/${kr}/"* ]]; then
+    die "Модуль amneziawg собран для другого ядра (не ${kr}). Перезагрузите сервер в новое ядро и повторите шаг 06. См. /tmp/amneziawg-dkms.log"
+  fi
+  if [[ "$strict" -eq 1 ]]; then
+    die "Не удалось загрузить amneziawg для ядра ${kr}. Установите linux-headers-${kr} (или reboot после upgrade образа) и повторите. См. /tmp/amneziawg-modprobe.log"
+  fi
   printf '%s\n' \
-    "Предупреждение: модуль amneziawg не загружен для ядра $(uname -r)." \
-    "Если apt поставил более новый linux-image — перезагрузите сервер и повторите шаг 06." \
+    "Предупреждение: модуль amneziawg не загружен для ядра ${kr}." \
     >&2
   return 0
 }
@@ -281,9 +306,28 @@ publish_amnezia_iface_conf() {
   chmod 700 -- "$dst_dir" 2>/dev/null || true
   local tmp obfuscation
   tmp="$(mktemp)"
-  obfuscation="$(generate_amnezia_obfuscation_block)"
+  # Сохраняем Jc/H* при повторном запуске (иначе клиенты перестанут стыковаться).
+  if [[ -f "$dst" ]] && grep -Eq '^[[:space:]]*Jc[[:space:]]*=' "$dst" 2>/dev/null; then
+    obfuscation="$(awk '
+      BEGIN { in_iface=0 }
+      /^[[:space:]]*\[Interface\]/ { in_iface=1; next }
+      /^[[:space:]]*\[/ { in_iface=0 }
+      in_iface && $0 ~ /^[[:space:]]*(Jc|Jmin|Jmax|S1|S2|S3|S4|H1|H2|H3|H4)[[:space:]]*=/ { print }
+    ' "$dst")"
+  elif grep -Eq '^[[:space:]]*Jc[[:space:]]*=' "$src" 2>/dev/null; then
+    obfuscation="$(awk '
+      BEGIN { in_iface=0 }
+      /^[[:space:]]*\[Interface\]/ { in_iface=1; next }
+      /^[[:space:]]*\[/ { in_iface=0 }
+      in_iface && $0 ~ /^[[:space:]]*(Jc|Jmin|Jmax|S1|S2|S3|S4|H1|H2|H3|H4)[[:space:]]*=/ { print }
+    ' "$src")"
+  else
+    obfuscation="$(generate_amnezia_obfuscation_block)"
+  fi
+  # Убираем старые Jc/H* из src, затем вставляем единый блок после PrivateKey.
   awk -v obf="$obfuscation" '
     BEGIN { inserted=0 }
+    $0 ~ /^[[:space:]]*(Jc|Jmin|Jmax|S1|S2|S3|S4|H1|H2|H3|H4)[[:space:]]*=/ { next }
     {
       print
       if (!inserted && $0 ~ /^PrivateKey[[:space:]]*=/) {
@@ -309,7 +353,7 @@ ensure_amnezia_tools() {
   local installer_log='/tmp/amneziawg-installer.log'
 
   if command -v awg >/dev/null 2>&1 && command -v awg-quick >/dev/null 2>&1; then
-    ensure_amnezia_kernel_module
+    ensure_amnezia_kernel_module 1
     return 0
   fi
 
@@ -318,11 +362,15 @@ ensure_amnezia_tools() {
     export DEBIAN_FRONTEND=noninteractive
     apt-get install -y -qq dkms iptables qrencode amneziawg-tools amneziawg >/tmp/amneziawg-apt.log 2>&1 || true
   elif command -v dnf >/dev/null 2>&1; then
-    dnf -y install amneziawg-tools amneziawg >/dev/null 2>&1 || true
+    dnf -y install dnf-plugins-core >/dev/null 2>&1 || true
+    dnf copr enable -y amneziavpn/amneziawg >/tmp/amneziawg-copr.log 2>&1 || true
+    dnf -y install amneziawg-tools amneziawg dkms >/tmp/amneziawg-dnf.log 2>&1 || true
   elif command -v yum >/dev/null 2>&1; then
-    yum -y install amneziawg-tools amneziawg >/dev/null 2>&1 || true
+    yum -y install yum-plugin-copr >/dev/null 2>&1 || true
+    yum copr enable -y amneziavpn/amneziawg >/tmp/amneziawg-copr.log 2>&1 || true
+    yum -y install amneziawg-tools amneziawg dkms >/tmp/amneziawg-yum.log 2>&1 || true
   elif command -v pkg >/dev/null 2>&1; then
-    pkg install -y amneziawg-tools amneziawg >/dev/null 2>&1 || true
+    pkg install -y amneziawg-tools amneziawg >/tmp/amneziawg-pkg.log 2>&1 || true
   fi
 
   # Fallback: wiresock installer в non-interactive режиме (без stdin-prompts).
@@ -361,7 +409,7 @@ ensure_amnezia_tools() {
 
   command -v awg >/dev/null 2>&1 || die "Выбран amneziawg, но бинарник awg не установлен (см. ${installer_log} и /tmp/amneziawg-apt.log)"
   command -v awg-quick >/dev/null 2>&1 || die "Выбран amneziawg, но бинарник awg-quick не установлен (см. ${installer_log} и /tmp/amneziawg-apt.log)"
-  ensure_amnezia_kernel_module
+  ensure_amnezia_kernel_module 1
 }
 
 awg_quick_unit_available() {
@@ -391,7 +439,7 @@ switch_to_awg_quick_unit() {
   systemctl stop 'awg-quick@awg0.service' >/dev/null 2>&1 || true
   ip link delete awg0 >/dev/null 2>&1 || true
 
-  ensure_amnezia_kernel_module
+  ensure_amnezia_kernel_module 1
   systemctl enable "$awg_unit" >/dev/null 2>&1 || die "Не удалось enable ${awg_unit}"
   local awg_err=''
   if ! awg_err=$(systemctl restart "$awg_unit" 2>&1); then
@@ -557,6 +605,9 @@ main() {
   export VPCONFIGURE_VP_SERVICE_QUICK_BINARY="${vp_bin_pair#*;}"
   if [[ "$vpservice_type" == "amneziawg" ]]; then
     switch_to_awg_quick_unit "$VPCONFIGURE_VPSERVER_INTERFACE_NAME"
+    export VPCONFIGURE_VP_CONF_PATH="/etc/amnezia/amneziawg/${VPCONFIGURE_VPSERVER_INTERFACE_NAME}.conf"
+  else
+    export VPCONFIGURE_VP_CONF_PATH="/etc/wireguard/${VPCONFIGURE_VPSERVER_INTERFACE_NAME}.conf"
   fi
 
   local -a vp_kv=(
@@ -570,6 +621,7 @@ main() {
     VPCONFIGURE_VPSERVER_NETWORK_CIDR "$VPCONFIGURE_VPSERVER_NETWORK_CIDR"
     VPCONFIGURE_VP_SERVICE_BINARY "$VPCONFIGURE_VP_SERVICE_BINARY"
     VPCONFIGURE_VP_SERVICE_QUICK_BINARY "$VPCONFIGURE_VP_SERVICE_QUICK_BINARY"
+    VPCONFIGURE_VP_CONF_PATH "$VPCONFIGURE_VP_CONF_PATH"
   )
   if [[ -n "${VPCONFIGURE_VP_WAN_IFACE:-}" ]]; then
     vp_kv+=( VPCONFIGURE_VP_WAN_IFACE "$VPCONFIGURE_VP_WAN_IFACE" )

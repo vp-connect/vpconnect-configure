@@ -58,8 +58,8 @@ SERVER_PUB_BASENAME='wg_server_public.key'
 
 DEFAULT_WG_PORT=51820
 DEFAULT_WG_ADDRESS='10.8.0.1/24'
-DEFAULT_CERT='/usr/wireguard/client_cert'
-DEFAULT_CONF_DIR='/usr/wireguard/client_config'
+DEFAULT_CERT='/usr/vpserver/client_cert'
+DEFAULT_CONF_DIR='/usr/vpserver/client_config'
 DEFAULT_PERSIST_FILE='/root/.vpconnect-configure.env'
 
 vp_sanitize_msg() {

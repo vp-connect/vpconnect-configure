@@ -278,7 +278,7 @@ run_debian() {
 
   login_max="${VPCONFIGURE_VPM_LOGIN_MAX_FAILED_ATTEMPTS:-5}"
   login_lock="${VPCONFIGURE_VPM_LOGIN_LOCKOUT_MINUTES:-60}"
-  wg_if_name="${VPCONFIGURE_WIREGUARD_INTERFACE_NAME:-}"
+  wg_if_name="${VPCONFIGURE_VPSERVER_INTERFACE_NAME:-${VPCONFIGURE_WIREGUARD_INTERFACE_NAME:-}}"
   if [[ -z "$wg_if_name" ]]; then
     local _08s _08r
     _08s=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")
@@ -287,23 +287,29 @@ run_debian() {
     source "${_08r}/wg/detect_wg_iface.inc.sh"
     wg_if_name=$(detect_wg_interface_name)
   fi
-  if [[ -v VPCONFIGURE_VP_CONF_PATH ]]; then
-    wg_conf_path="$(expand_tilde "${VPCONFIGURE_VP_CONF_PATH:-}")"
-  elif [[ -v VPCONFIGURE_WG_CONF_PATH ]]; then
-    wg_conf_path="$(expand_tilde "${VPCONFIGURE_WG_CONF_PATH:-}")"
-  else
-    wg_conf_path="/etc/wireguard/${wg_if_name}.conf"
-  fi
-  wg_sync_min="${VPCONFIGURE_WIREGUARD_SYNC_INTERVAL_MINUTES:-5}"
-  wg_network_cidr="${VPCONFIGURE_WIREGUARD_NETWORK_CIDR:-}"
-  wg_endpoint="${VPCONFIGURE_WIREGUARD_ENDPOINT:-}"
-  wg_pub_host="${VPCONFIGURE_WIREGUARD_PUBLIC_HOST:-${VPCONFIGURE_DOMAIN}}"
-  wg_listen_port="${VPCONFIGURE_WIREGUARD_LISTEN_PORT:-${VPCONFIGURE_VP_PORT:-${VPCONFIGURE_WG_PORT:-0}}}"
-  wg_dns="${VPCONFIGURE_WIREGUARD_DNS:-8.8.8.8}"
   vp_service_type="$(printf '%s' "${VPCONFIGURE_VPSERVER_TYPE:-wireguard}" | tr '[:upper:]' '[:lower:]')"
   if [[ "$vp_service_type" != "wireguard" && "$vp_service_type" != "amneziawg" ]]; then
     vp_service_type="wireguard"
   fi
+  if [[ -v VPCONFIGURE_VP_CONF_PATH ]]; then
+    wg_conf_path="$(expand_tilde "${VPCONFIGURE_VP_CONF_PATH:-}")"
+  elif [[ -v VPCONFIGURE_WG_CONF_PATH ]]; then
+    wg_conf_path="$(expand_tilde "${VPCONFIGURE_WG_CONF_PATH:-}")"
+  elif [[ "$vp_service_type" == "amneziawg" ]]; then
+    wg_conf_path="/etc/amnezia/amneziawg/${wg_if_name}.conf"
+  else
+    wg_conf_path="/etc/wireguard/${wg_if_name}.conf"
+  fi
+  # Если тип amneziawg и канонический awg-конфиг уже есть — используем его.
+  if [[ "$vp_service_type" == "amneziawg" && -f "/etc/amnezia/amneziawg/${wg_if_name}.conf" ]]; then
+    wg_conf_path="/etc/amnezia/amneziawg/${wg_if_name}.conf"
+  fi
+  wg_sync_min="${VPCONFIGURE_WIREGUARD_SYNC_INTERVAL_MINUTES:-5}"
+  wg_network_cidr="${VPCONFIGURE_WIREGUARD_NETWORK_CIDR:-${VPCONFIGURE_VPSERVER_NETWORK_CIDR:-}}"
+  wg_endpoint="${VPCONFIGURE_WIREGUARD_ENDPOINT:-}"
+  wg_pub_host="${VPCONFIGURE_WIREGUARD_PUBLIC_HOST:-${VPCONFIGURE_DOMAIN}}"
+  wg_listen_port="${VPCONFIGURE_WIREGUARD_LISTEN_PORT:-${VPCONFIGURE_VP_PORT:-${VPCONFIGURE_WG_PORT:-0}}}"
+  wg_dns="${VPCONFIGURE_WIREGUARD_DNS:-8.8.8.8}"
 
   if [[ -z "$wg_network_cidr" && -n "$wg_conf_path" && -f "$wg_conf_path" ]]; then
     local _addr

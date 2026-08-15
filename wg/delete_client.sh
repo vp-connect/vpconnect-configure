@@ -1,16 +1,10 @@
 #!/usr/bin/env bash
 # delete_client.sh
 #
-# Удаление клиента WireGuard: блок от маркера # Client: <имя> в /etc/wireguard/<iface>.conf,
-# файлы ключей, клиентский .conf и QR. Резервная копия <iface>.conf → <iface>.conf.bak.
-# Применение: wg syncconf <iface>.
+# Удаление VPN-клиента (wireguard | amneziawg): блок # Client: из активного конфига
+# (+ зеркало), ключи/конфиг/QR, syncconf.
 #
-# Использование: один аргумент — имя клиента (как в маркере # Client:).
-#
-# Пути/параметры должны совпадать с create_client.sh:
-# берутся из VPCONFIGURE_* или автоопределяются; ключи/конфиги по умолчанию в /usr/wireguard/client_cert и /usr/wireguard/client_config.
-#
-# Зависимости: wg, wg-quick; права root.
+# Использование: один аргумент — имя клиента.
 # В debian-ветке допускается только VPCONFIGURE_GIT_BRANCH=debian.
 
 set -e
@@ -19,48 +13,8 @@ _wg_src=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOU
 _wg_dir=$(cd "$(dirname "$_wg_src")" && pwd)
 # shellcheck source=detect_wg_iface.inc.sh
 source "${_wg_dir}/detect_wg_iface.inc.sh"
-
-expand_tilde() {
-    local p=$1
-    if [[ "$p" == '~' || "$p" == ~/* ]]; then
-        p="${p/\~/$HOME}"
-    fi
-    printf '%s' "$p"
-}
-
-vpconfigure_source_saved_env() {
-    local f=${1:-/root/.vpconnect-configure.env}
-    f="$(expand_tilde "$f")"
-    [[ -r "$f" ]] || return 0
-    # shellcheck disable=SC1090
-    set -a
-    . "$f"
-    set +a
-}
-
-require_root() {
-    if [[ "${EUID:-0}" -ne 0 ]]; then
-        echo "Ошибка: запускайте от root." >&2
-        exit 1
-    fi
-}
-
-require_cmd() {
-    local c=$1
-    command -v "$c" >/dev/null 2>&1 || {
-        echo "Ошибка: не найдена команда '$c' в PATH." >&2
-        exit 1
-    }
-}
-
-require_debian_branch() {
-    local b
-    b=$(printf '%s' "${VPCONFIGURE_GIT_BRANCH:-}" | tr '[:upper:]' '[:lower:]')
-    if [[ "$b" != "debian" ]]; then
-        echo "Ошибка: delete_client.sh в ветке debian поддерживает только VPCONFIGURE_GIT_BRANCH=debian (текущее: ${b:-unset})." >&2
-        exit 1
-    fi
-}
+# shellcheck source=vp_runtime.inc.sh
+source "${_wg_dir}/vp_runtime.inc.sh"
 
 if [ $# -ne 1 ]; then
     echo "Использование: $0 <имя_клиента>"
@@ -68,56 +22,45 @@ if [ $# -ne 1 ]; then
 fi
 
 NAME=$1
-vpconfigure_source_saved_env "/root/.vpconnect-configure.env"
-require_debian_branch
-require_root
-require_cmd wg
-require_cmd wg-quick
-WG_IFACE="${VPCONFIGURE_WIREGUARD_INTERFACE_NAME:-$(detect_wg_interface_name)}"
-WG_CONF="${VPCONFIGURE_WG_CONF_PATH:-/etc/wireguard/${WG_IFACE}.conf}"
-KEY_DIR="${VPCONFIGURE_WG_CLIENT_CERT_PATH:-/usr/wireguard/client_cert}"
-CONFIG_DIR="${VPCONFIGURE_WG_CLIENT_CONFIG_PATH:-/usr/wireguard/client_config}"
+vp_source_saved_env "/root/.vpconnect-configure.env"
+vp_require_os_branch debian "delete_client.sh"
+vp_require_root
+
+VP_BIN="$(vp_bin)"
+VP_QUICK="$(vp_quick_bin)"
+vp_require_cmd "$VP_BIN"
+vp_require_cmd "$VP_QUICK"
+
+WG_CONF="$(vp_conf_path)"
+MIRROR_CONF="$(vp_mirror_conf_path || true)"
+KEY_DIR="$(vp_client_cert_dir)"
+CONFIG_DIR="$(vp_client_config_dir)"
 QR_DIR="$CONFIG_DIR/qr"
 
-WG_CONF="$(expand_tilde "$WG_CONF")"
-KEY_DIR="$(expand_tilde "$KEY_DIR")"
-CONFIG_DIR="$(expand_tilde "$CONFIG_DIR")"
-QR_DIR="$(expand_tilde "$QR_DIR")"
-
-# Проверка существования клиента
-if ! grep -q "^# Client: $NAME$" "$WG_CONF"; then
-    echo "Ошибка: клиент с именем $NAME не найден в $WG_CONF"
-    exit 1
-fi
-
-START_LINE=$(grep -n "^# Client: $NAME$" "$WG_CONF" | cut -d: -f1)
-
-# Определяем конец блока (последняя строка данных перед пустой строкой или следующим клиентом)
-END_LINE=""
-CURRENT=$((START_LINE + 1))
-while IFS= read -r line; do
-    if [[ -z "$line" || "$line" =~ ^#\ Client: ]]; then
-        END_LINE=$((CURRENT))
-        break
+remove_client_from_conf() {
+    local conf=$1
+    [[ -f "$conf" ]] || return 0
+    if ! grep -q "^# Client: $NAME$" "$conf"; then
+        return 0
     fi
-    ((CURRENT++))
-done < <(tail -n +$((START_LINE + 1)) "$WG_CONF")
-
-if [ -z "$END_LINE" ]; then
-    END_LINE=$(wc -l < "$WG_CONF")
-fi
-
-# Резервное копирование
-cp "$WG_CONF" "$WG_CONF.bak"
-
-# Создаём временный файл
-TMP_FILE=$(mktemp)
-
-# Удаляем строки с START_LINE по END_LINE
-sed "${START_LINE},${END_LINE}d" "$WG_CONF" > "$TMP_FILE"
-
-# Нормализуем пустые строки: одна пустая между блоками, нет пустых в начале и конце
-awk '
+    local START_LINE END_LINE CURRENT TMP_FILE
+    START_LINE=$(grep -n "^# Client: $NAME$" "$conf" | cut -d: -f1)
+    END_LINE=""
+    CURRENT=$((START_LINE + 1))
+    while IFS= read -r line; do
+        if [[ -z "$line" || "$line" =~ ^#\ Client: ]]; then
+            END_LINE=$((CURRENT))
+            break
+        fi
+        ((CURRENT++))
+    done < <(tail -n +$((START_LINE + 1)) "$conf")
+    if [ -z "$END_LINE" ]; then
+        END_LINE=$(wc -l < "$conf")
+    fi
+    cp "$conf" "$conf.bak"
+    TMP_FILE=$(mktemp)
+    sed "${START_LINE},${END_LINE}d" "$conf" > "$TMP_FILE"
+    awk '
 BEGIN { empty=0; first=1 }
 /^$/ { empty++; next }
 {
@@ -126,18 +69,25 @@ BEGIN { empty=0; first=1 }
     empty=0
     first=0
 }
-END { }  # Не добавляем пустую строку в конце
-' "$TMP_FILE" > "$WG_CONF.new"
+' "$TMP_FILE" > "$conf.new"
+    mv "$conf.new" "$conf"
+    rm -f "$TMP_FILE"
+}
 
-mv "$WG_CONF.new" "$WG_CONF"
-rm -f "$TMP_FILE"
+if [[ ! -f "$WG_CONF" ]] || ! grep -q "^# Client: $NAME$" "$WG_CONF"; then
+    echo "Ошибка: клиент с именем $NAME не найден в $WG_CONF"
+    exit 1
+fi
 
-# Удаление ключей и конфигов клиента
+remove_client_from_conf "$WG_CONF"
+if [[ -n "${MIRROR_CONF:-}" ]]; then
+    remove_client_from_conf "$MIRROR_CONF"
+fi
+
 rm -f "$KEY_DIR/${NAME}_private.key" "$KEY_DIR/${NAME}_public.key"
 rm -f "$CONFIG_DIR/${NAME}.conf"
 rm -f "$QR_DIR/${NAME}.txt"
 
-# Применяем изменения без перезапуска
-wg syncconf "$WG_IFACE" <(wg-quick strip "$WG_IFACE")
+vp_syncconf
 
 echo "✅ Клиент $NAME успешно удалён."

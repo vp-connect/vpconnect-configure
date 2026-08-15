@@ -154,6 +154,7 @@ main() {
   remove_units_like "wg-quick@"
   remove_units_like "awg-quick@"
   rm_if_exists "/etc/wireguard"
+  rm_if_exists "/etc/amnezia"
   rm_if_exists "/etc/amneziawg"
   rm_if_exists "/usr/wireguard"
   rm_if_exists "/usr/vpserver"
