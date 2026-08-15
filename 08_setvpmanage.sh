@@ -34,9 +34,9 @@ VPM_GIT_BRANCH='main'
 DEFAULT_HTTP_PORT=80
 SYSTEMD_SERVICE='vpconnect-manage'
 DEFAULT_PERSIST_FILE='/root/.vpconnect-configure.env'
-WG_PRIV_DEFAULT='/etc/wireguard/privatekey'
-WG_CLIENT_DIR_DEFAULT='/usr/wireguard/client_config'
-WG_CLIENT_CERT_DEFAULT='/usr/wireguard/client_cert'
+VP_PRIV_DEFAULT='/etc/wireguard/privatekey'
+VP_CLIENT_DIR_DEFAULT='/usr/vpserver/client_config'
+VP_CLIENT_CERT_DEFAULT='/usr/vpserver/client_cert'
 
 vp_sanitize_msg() {
   local s="$*"
@@ -231,14 +231,14 @@ run_debian() {
     esac
   done
 
-  if [[ -z "${VPCONFIGURE_WG_PRIVATE_KEY_PATH:-}" ]]; then
-    export VPCONFIGURE_WG_PRIVATE_KEY_PATH="$WG_PRIV_DEFAULT"
+  if [[ -z "${VPCONFIGURE_VP_PRIVATE_KEY_PATH:-}" ]]; then
+    export VPCONFIGURE_VP_PRIVATE_KEY_PATH="${VPCONFIGURE_WG_PRIVATE_KEY_PATH:-$VP_PRIV_DEFAULT}"
   fi
-  if [[ -z "${VPCONFIGURE_WG_CLIENT_CONFIG_PATH:-}" ]]; then
-    export VPCONFIGURE_WG_CLIENT_CONFIG_PATH="$WG_CLIENT_DIR_DEFAULT"
+  if [[ -z "${VPCONFIGURE_VP_CLIENT_CONFIG_PATH:-}" ]]; then
+    export VPCONFIGURE_VP_CLIENT_CONFIG_PATH="${VPCONFIGURE_WG_CLIENT_CONFIG_PATH:-$VP_CLIENT_DIR_DEFAULT}"
   fi
-  if [[ -z "${VPCONFIGURE_WG_CLIENT_CERT_PATH:-}" ]]; then
-    export VPCONFIGURE_WG_CLIENT_CERT_PATH="$WG_CLIENT_CERT_DEFAULT"
+  if [[ -z "${VPCONFIGURE_VP_CLIENT_CERT_PATH:-}" ]]; then
+    export VPCONFIGURE_VP_CLIENT_CERT_PATH="${VPCONFIGURE_WG_CLIENT_CERT_PATH:-$VP_CLIENT_CERT_DEFAULT}"
   fi
 
   [[ -n "${VPCONFIGURE_DOMAIN:-}" ]] \
@@ -247,9 +247,9 @@ run_debian() {
   printf '%s\n' "VPManage: VPCONFIGURE_DOMAIN=${VPCONFIGURE_DOMAIN}; дальше — пакеты, клон, venv…" >&2
 
   local wg_priv_exp
-  wg_priv_exp="$(expand_tilde "$VPCONFIGURE_WG_PRIVATE_KEY_PATH")"
+  wg_priv_exp="$(expand_tilde "$VPCONFIGURE_VP_PRIVATE_KEY_PATH")"
   local wg_conf_exp
-  wg_conf_exp="$(expand_tilde "$VPCONFIGURE_WG_CLIENT_CONFIG_PATH")"
+  wg_conf_exp="$(expand_tilde "$VPCONFIGURE_VP_CLIENT_CONFIG_PATH")"
 
   local derived_secret derived_link
   derived_secret="$(dirname -- "$wg_priv_exp")/mtproxy_secret.txt"
@@ -273,8 +273,8 @@ run_debian() {
     wg_sync_min wg_if_name wg_network_cidr wg_endpoint wg_pub_host wg_listen_port wg_dns
 
   mtproxy_link_file="$(expand_tilde "$VPCONFIGURE_MTPROXY_LINK_PATH")"
-  wg_client_conf_dir="$(expand_tilde "${VPCONFIGURE_WIREGUARD_CLIENT_CONFIG_DIR:-$VPCONFIGURE_WG_CLIENT_CONFIG_PATH}")"
-  wg_keys_dir="$(expand_tilde "${VPCONFIGURE_WIREGUARD_CLIENT_KEYS_DIR:-$VPCONFIGURE_WG_CLIENT_CERT_PATH}")"
+  wg_client_conf_dir="$(expand_tilde "${VPCONFIGURE_WIREGUARD_CLIENT_CONFIG_DIR:-$VPCONFIGURE_VP_CLIENT_CONFIG_PATH}")"
+  wg_keys_dir="$(expand_tilde "${VPCONFIGURE_WIREGUARD_CLIENT_KEYS_DIR:-$VPCONFIGURE_VP_CLIENT_CERT_PATH}")"
 
   login_max="${VPCONFIGURE_VPM_LOGIN_MAX_FAILED_ATTEMPTS:-5}"
   login_lock="${VPCONFIGURE_VPM_LOGIN_LOCKOUT_MINUTES:-60}"
@@ -287,7 +287,9 @@ run_debian() {
     source "${_08r}/wg/detect_wg_iface.inc.sh"
     wg_if_name=$(detect_wg_interface_name)
   fi
-  if [[ -v VPCONFIGURE_WG_CONF_PATH ]]; then
+  if [[ -v VPCONFIGURE_VP_CONF_PATH ]]; then
+    wg_conf_path="$(expand_tilde "${VPCONFIGURE_VP_CONF_PATH:-}")"
+    elif [[ -v VPCONFIGURE_WG_CONF_PATH ]]; then
     wg_conf_path="$(expand_tilde "${VPCONFIGURE_WG_CONF_PATH:-}")"
   else
     wg_conf_path="/etc/wireguard/${wg_if_name}.conf"
@@ -296,7 +298,7 @@ run_debian() {
   wg_network_cidr="${VPCONFIGURE_WIREGUARD_NETWORK_CIDR:-}"
   wg_endpoint="${VPCONFIGURE_WIREGUARD_ENDPOINT:-}"
   wg_pub_host="${VPCONFIGURE_WIREGUARD_PUBLIC_HOST:-${VPCONFIGURE_DOMAIN}}"
-  wg_listen_port="${VPCONFIGURE_WIREGUARD_LISTEN_PORT:-${VPCONFIGURE_WG_PORT:-0}}"
+  wg_listen_port="${VPCONFIGURE_WIREGUARD_LISTEN_PORT:-${VPCONFIGURE_VP_PORT:-${VPCONFIGURE_WG_PORT:-0}}}"
   wg_dns="${VPCONFIGURE_WIREGUARD_DNS:-8.8.8.8}"
 
   if [[ -z "$wg_network_cidr" && -n "$wg_conf_path" && -f "$wg_conf_path" ]]; then
@@ -457,7 +459,7 @@ WIREGUARD_DNS=${wg_dns}
 # Каталог клиентских *.conf (и qr). Пусто = <родитель WIREGUARD_CLIENT_KEYS_DIR>/client_config.
 WIREGUARD_CLIENT_CONFIG_DIR=${wg_client_conf_dir}
 
-# Каталог файлов ключей клиентов на сервере (по умолчанию VPCONFIGURE_WG_CLIENT_CERT_PATH с 06).
+# Каталог файлов ключей клиентов на сервере (по умолчанию VPCONFIGURE_VP_CLIENT_CERT_PATH с 06).
 WIREGUARD_CLIENT_KEYS_DIR=${wg_keys_dir}
 
 # --- MTProxy ---

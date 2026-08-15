@@ -47,8 +47,8 @@ DEFAULT_MTPROXY_PORT=443
 MTPROXY_INTERNAL_PORT=8888
 DEFAULT_PERSIST_FILE='/root/.vpconnect-configure.env'
 SYSTEMD_NAME='mtproxy'
-WG_PRIV_DEFAULT='/etc/wireguard/privatekey'
-WG_CLIENT_DIR_DEFAULT='/usr/wireguard/client_config'
+VP_PRIV_DEFAULT='/etc/wireguard/privatekey'
+VP_CLIENT_DIR_DEFAULT='/usr/vpserver/client_config'
 
 vp_sanitize_msg() {
   local s="$*"
@@ -79,8 +79,8 @@ die() {
 usage() {
   vp_result_line success "Справка выведена в stderr"
   cat >&2 <<EOF
-Установка MTProxy (ветка debian). Нужны VPCONFIGURE_DOMAIN; пути WG из export, из
-${DEFAULT_PERSIST_FILE} или умолчания ${WG_PRIV_DEFAULT} и ${WG_CLIENT_DIR_DEFAULT} (каталоги/ключ создаются при необходимости).
+Установка MTProxy (ветка debian). Нужны VPCONFIGURE_DOMAIN; пути VPN из export, из
+${DEFAULT_PERSIST_FILE} или умолчания ${VP_PRIV_DEFAULT} и ${VP_CLIENT_DIR_DEFAULT} (каталоги/ключ создаются при необходимости).
 
   --mtproxy-port N      Публичный TCP-порт для клиентов (-H mtproto-proxy; по умолчанию ${DEFAULT_MTPROXY_PORT})
   --mtproxy-secret HEX  Секрет: 32 шестнадцатеричных символа или dd<32 hex> (как в tg://proxy).
@@ -93,7 +93,7 @@ ${DEFAULT_PERSIST_FILE} или умолчания ${WG_PRIV_DEFAULT} и ${WG_CLI
   -h, --help
 
 Каталог сборки: ${MTP_ROOT}
-Файлы: mtproxy_secret.txt рядом с WG private key; mtproxy.link в WG client config.
+Файлы: mtproxy_secret.txt рядом с VPN private key; mtproxy.link в VP client config.
 EOF
 }
 
@@ -318,18 +318,18 @@ run_debian() {
 
   vpconfigure_source_saved_env "$DEFAULT_PERSIST_FILE"
 
-  if [[ -z "${VPCONFIGURE_WG_PRIVATE_KEY_PATH:-}" ]]; then
-    export VPCONFIGURE_WG_PRIVATE_KEY_PATH="$WG_PRIV_DEFAULT"
-    printf '%s\n' "VPCONFIGURE_WG_PRIVATE_KEY_PATH не задан — использую ${WG_PRIV_DEFAULT}" >&2
+  if [[ -z "${VPCONFIGURE_VP_PRIVATE_KEY_PATH:-}" ]]; then
+    export VPCONFIGURE_VP_PRIVATE_KEY_PATH="${VPCONFIGURE_WG_PRIVATE_KEY_PATH:-$VP_PRIV_DEFAULT}"
+    printf '%s\n' "VPCONFIGURE_VP_PRIVATE_KEY_PATH не задан — использую ${VPCONFIGURE_VP_PRIVATE_KEY_PATH}" >&2
   fi
-  if [[ -z "${VPCONFIGURE_WG_CLIENT_CONFIG_PATH:-}" ]]; then
-    export VPCONFIGURE_WG_CLIENT_CONFIG_PATH="$WG_CLIENT_DIR_DEFAULT"
-    printf '%s\n' "VPCONFIGURE_WG_CLIENT_CONFIG_PATH не задан — использую ${WG_CLIENT_DIR_DEFAULT}" >&2
+  if [[ -z "${VPCONFIGURE_VP_CLIENT_CONFIG_PATH:-}" ]]; then
+    export VPCONFIGURE_VP_CLIENT_CONFIG_PATH="${VPCONFIGURE_WG_CLIENT_CONFIG_PATH:-$VP_CLIENT_DIR_DEFAULT}"
+    printf '%s\n' "VPCONFIGURE_VP_CLIENT_CONFIG_PATH не задан — использую ${VPCONFIGURE_VP_CLIENT_CONFIG_PATH}" >&2
   fi
 
   : "${VPCONFIGURE_DOMAIN:?Задайте VPCONFIGURE_DOMAIN (05_setdomain.sh) или добавьте в ${DEFAULT_PERSIST_FILE}}"
-  : "${VPCONFIGURE_WG_PRIVATE_KEY_PATH:?}"
-  : "${VPCONFIGURE_WG_CLIENT_CONFIG_PATH:?}"
+  : "${VPCONFIGURE_VP_PRIVATE_KEY_PATH:?}"
+  : "${VPCONFIGURE_VP_CLIENT_CONFIG_PATH:?}"
 
   [[ -n "$opt_port" ]] || opt_port=$DEFAULT_MTPROXY_PORT
   if ! [[ "$opt_port" =~ ^[0-9]+$ ]] || [[ "$opt_port" -lt 1 || "$opt_port" -gt 65535 ]]; then
@@ -338,15 +338,15 @@ run_debian() {
 
   persist_file="$(expand_tilde "$persist_file")"
 
-  local wg_priv
-  wg_priv="$(expand_tilde "$VPCONFIGURE_WG_PRIVATE_KEY_PATH")"
-  local wg_conf_dir
-  wg_conf_dir="$(expand_tilde "$VPCONFIGURE_WG_CLIENT_CONFIG_PATH")"
+  local vp_priv
+  vp_priv="$(expand_tilde "$VPCONFIGURE_VP_PRIVATE_KEY_PATH")"
+  local vp_conf_dir
+  vp_conf_dir="$(expand_tilde "$VPCONFIGURE_VP_CLIENT_CONFIG_PATH")"
 
   local secret_dir
-  secret_dir="$(dirname -- "$wg_priv")"
+  secret_dir="$(dirname -- "$vp_priv")"
   local secret_path="${secret_dir}/mtproxy_secret.txt"
-  local link_path="${wg_conf_dir}/mtproxy.link"
+  local link_path="${vp_conf_dir}/mtproxy.link"
   local effective_host
   effective_host=$(printf '%s' "$VPCONFIGURE_DOMAIN" | tr -d '\r\n')
 
@@ -363,7 +363,7 @@ run_debian() {
 
   command -v git >/dev/null 2>&1 || die "git не найден в PATH, сначала 02_gitinstall.sh"
 
-  ensure_wg_private_and_client_paths "$wg_priv" "$wg_conf_dir"
+  ensure_wg_private_and_client_paths "$vp_priv" "$vp_conf_dir"
 
   local SECRET
   if [[ -n "$opt_secret" ]]; then

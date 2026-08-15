@@ -43,7 +43,7 @@
 | `03_getconfigure.sh` | Клон/обновление репозитория конфигурации |
 | `04_setsystemaccess.sh` | Доступ root/SSH/ключ и `ufw` |
 | `05_setdomain.sh` | Установка `VPCONFIGURE_DOMAIN` |
-| `06_setwireguard.sh` | WireGuard (Debian-реализация) |
+| `06_setvpservice.sh` | VPN service: WireGuard/AmneziaWG (Debian-реализация) |
 | `07_setmtproxy.sh` | MTProxy (Debian-реализация) |
 | `08_setvpmanage.sh` | VPManage (Debian-реализация) |
 
