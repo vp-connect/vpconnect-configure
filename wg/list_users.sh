@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # list_users.sh
 #
-# Чтение списка клиентов из /etc/wireguard/<iface>.conf по маркерам «# Client: <имя>» и блокам [Peer].
+# Чтение списка клиентов из активного VPN-конфига (wireguard|/etc/amnezia/amneziawg) по маркерам «# Client: <имя>» и блокам [Peer].
 # Активный клиент — блок, где есть хотя бы одна непустая строка, не начинающаяся с # (раскомментированный [Peer]).
 # Отключённый — блок из закомментированных строк (как после toggle_client.sh disable).
 #
@@ -14,46 +14,20 @@
 # Вывод: stdout; ошибки (нет файла, неизвестная опция) — stderr, код выхода 1.
 #
 # Используется из wg.sh с флагом --names-only для массовых enable/disable --all.
-# В centos-ветке допускается только VPCONFIGURE_GIT_BRANCH=centos.
+# В debian-ветке допускается только VPCONFIGURE_GIT_BRANCH=centos.
 
 _wg_src=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")
 _wg_dir=$(cd "$(dirname "$_wg_src")" && pwd)
 # shellcheck source=detect_wg_iface.inc.sh
 source "${_wg_dir}/detect_wg_iface.inc.sh"
+# shellcheck source=vp_runtime.inc.sh
+source "${_wg_dir}/vp_runtime.inc.sh"
 set -e
 
-expand_tilde() {
-    local p=$1
-    if [[ "$p" == '~' || "$p" == ~/* ]]; then
-        p="${p/\~/$HOME}"
-    fi
-    printf '%s' "$p"
-}
-
-vpconfigure_source_saved_env() {
-    local f=${1:-/root/.vpconnect-configure.env}
-    f="$(expand_tilde "$f")"
-    [[ -r "$f" ]] || return 0
-    # shellcheck disable=SC1090
-    set -a
-    . "$f"
-    set +a
-}
-
-require_centos_branch() {
-    local b
-    b=$(printf '%s' "${VPCONFIGURE_GIT_BRANCH:-}" | tr '[:upper:]' '[:lower:]')
-    if [[ "$b" != "centos" ]]; then
-        echo "Ошибка: list_users.sh в ветке centos поддерживает только VPCONFIGURE_GIT_BRANCH=centos (текущее: ${b:-unset})." >&2
-        exit 1
-    fi
-}
-
-vpconfigure_source_saved_env "/root/.vpconnect-configure.env"
-require_centos_branch
-WG_IFACE="${VPCONFIGURE_WIREGUARD_INTERFACE_NAME:-$(detect_wg_interface_name)}"
-WG_CONF="${VPCONFIGURE_WG_CONF_PATH:-/etc/wireguard/${WG_IFACE}.conf}"
-WG_CONF="$(expand_tilde "$WG_CONF")"
+vp_source_saved_env "/root/.vpconnect-configure.env"
+vp_require_os_branch centos "list_users.sh"
+WG_IFACE="$(vp_iface_name)"
+WG_CONF="$(vp_conf_path)"
 COLOR_ENABLE="\e[32m"
 COLOR_DISABLE="\e[31m"
 COLOR_RESET="\e[0m"
