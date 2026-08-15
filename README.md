@@ -41,7 +41,7 @@
 | `03_getconfigure.sh` | Клон/обновление репозитория конфигурации |
 | `04_setsystemaccess.sh` | Доступ root/SSH/ключ и firewall-профиль FreeBSD |
 | `05_setdomain.sh` | Установка `VPCONFIGURE_DOMAIN` |
-| `06_setwireguard.sh` | WireGuard (FreeBSD-реализация) |
+| `06_setvpservice.sh` | VPN service: WireGuard/AmneziaWG |
 | `07_setmtproxy.sh` | MTProxy (FreeBSD-реализация) |
 | `08_setvpmanage.sh` | VPManage (FreeBSD-реализация) |
 
